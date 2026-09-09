@@ -21,14 +21,26 @@ using std::endl;
 #include "helpers.h"
 #include "input_config.h"
 #include "chain_builder.h"
+#include "JetCorrector.h"
 
-R__LOAD_LIBRARY(histograms_C.so)
-R__LOAD_LIBRARY(eventhistograms_C.so)
+
+#include <random>
+#include "CondFormats/JetMETObjects/interface/FactorizedJetCorrector.h"
+
+// Explicit "./" prefix, not a bare filename: a bare name is resolved via the
+// dynamic linker's standard library search (LD_LIBRARY_PATH etc, which does
+// not include cwd), and that's what R__LOAD_LIBRARY's pragma expands to when
+// hit this early in cling's processing of the file - inside the cmssw-el8
+// Condor job container this reliably failed ("cannot open shared object
+// file") even though the .so sits right next to this .cc, while plain
+// interactive `root -l -b -q` from the same directory tolerated the bare
+// name. "./histograms_C.so" forces literal relative-path resolution instead.
+R__LOAD_LIBRARY(./histograms_C.so)
+R__LOAD_LIBRARY(./eventhistograms_C.so)
 
 #include "JetMETCorrections/Modules/interface/JetResolution.h"
 JME::JetResolution *_jer(0);
 JME::JetResolutionScaleFactor *_jer_sf(0);
-float rho = 0.;
 
 std::mt19937 _mersennetwister;
 std::uint32_t _seed = 4;
@@ -73,6 +85,7 @@ float GetPthatBin(float pthat, const std::vector<float>& bins) {
 
 // Photon+Jet analysis for L3 residual corrections
 // jetTree: jet tree path, e.g. "ak4PFJetAnalyzer/t" or "ak4PFJetAnalyzerSDZcut1/t"
+//
 void analyse_PhotonJet(string input = "PHOTONHP",
                        string outputfiletag = "AK4_photonjet",
                        bool isMC = false, bool checkjetid = false,
@@ -159,7 +172,7 @@ void analyse_PhotonJet(string input = "PHOTONHP",
                          inputName.c_str(), outputfiletag.c_str());
   }
   if (debug)
-    outputfilename = "test.root";
+    outputfilename = Form("%s/%s_test.root",config.outputDir.c_str(),inputName.c_str());
 
   cout << "Output file: " << outputfilename << endl;
 
@@ -185,7 +198,7 @@ void analyse_PhotonJet(string input = "PHOTONHP",
 
   // Cuts and weights from event tree
   Int_t hiBin = -1;
-  Float_t weight = 1, vz = 0, pthat = 0, evtwt = 1;
+  Float_t weight = 1, vz = 0, pthat = 0, evtwt = 1, rho=0;
 
   // Photon variables (vectors)
   Int_t nPho;
@@ -263,6 +276,7 @@ void analyse_PhotonJet(string input = "PHOTONHP",
   Float_t jtpt_uncorr[MAXJETS];
   Float_t jteta[MAXJETS];
   Float_t jtphi[MAXJETS];
+  Float_t jtarea[MAXJETS];
 
   Float_t jtnhf[MAXJETS];
   Float_t jtchf[MAXJETS];
@@ -270,21 +284,25 @@ void analyse_PhotonJet(string input = "PHOTONHP",
   Float_t jtcef[MAXJETS];
   Float_t jtmuf[MAXJETS];
 
+
   Int_t jtchm[MAXJETS]; // charged multiplicity
 
   Int_t jtn[MAXJETS];
 
   jetTree->SetBranchAddress("evt", &evt);
   jetTree->SetBranchAddress("nref", &nref);
+
   jetTree->SetBranchAddress("rawpt", &jtpt); // we want uncorrected rawpt, jtpt might have some JEC already applied
   jetTree->SetBranchAddress("jteta", &jteta);
   jetTree->SetBranchAddress("jtphi", &jtphi);
-  
+  jetTree->SetBranchAddress("jtarea", &jtarea);
+
   jetTree->SetBranchStatus("evt", 1);
   jetTree->SetBranchStatus("nref", 1);
   jetTree->SetBranchStatus("rawpt", 1);
   jetTree->SetBranchStatus("jteta", 1);
   jetTree->SetBranchStatus("jtphi", 1);
+  jetTree->SetBranchStatus("jtarea", 1);
 
   jetTree->SetBranchAddress("jtPfNHF", &jtnhf);
   jetTree->SetBranchAddress("jtPfCHF", &jtchf);
@@ -319,6 +337,7 @@ void analyse_PhotonJet(string input = "PHOTONHP",
   // Set photon branch addresses (vectors)
   photonTree->SetBranchStatus("*", 0);
   photonTree->SetBranchStatus("nPho", 1);
+  photonTree->SetBranchStatus("rho",1);
   photonTree->SetBranchStatus("phoEt", 1);
   photonTree->SetBranchStatus("phoEta", 1);
   photonTree->SetBranchStatus("phoPhi", 1);
@@ -341,6 +360,7 @@ void analyse_PhotonJet(string input = "PHOTONHP",
     photonTree->SetBranchStatus("pho_genMatchedIndex", 1);
   }
   photonTree->SetBranchAddress("nPho", &nPho);
+  photonTree->SetBranchAddress("rho",&rho);
   photonTree->SetBranchAddress("phoEt", &phoEt);
   photonTree->SetBranchAddress("phoEta", &phoEta);
   photonTree->SetBranchAddress("phoPhi", &phoPhi);
@@ -370,10 +390,15 @@ void analyse_PhotonJet(string input = "PHOTONHP",
 
   // Create folders for centrality bins. Mostly a placeholder in case PbPb
   // MC/data is checked.
-  for (int j = 0; j < nhibins; ++j) {
+  for (int j = 0; j < nhibins; ++j) {\
 
     if (hibins[j] < hibins[j + 1]) {
+      // "%.1f_%.1f", not "%.1fto%.1f": analyse.cc / analyse_ZJet.cc /
+      // analyse_JER.cc all use the underscore form, and deriveL3_from_photonjet.C
+      // Get()s "hibin_-1.0_0.0/...". With "to" here every downstream Get()
+      // returns a null pointer.
       string name = Form("hibin_%.1f_%.1f", hibins[j], hibins[j + 1]);
+      //std::replace(name.begin(), name.end(), '.', 'p');
       outfile->mkdir(name.c_str());
 
       TDirectory *dir = outfile->GetDirectory(name.c_str());
@@ -406,23 +431,38 @@ void analyse_PhotonJet(string input = "PHOTONHP",
   eventhistograms *eh = new eventhistograms(dir, isMC);
 
 #if REDOJES == 1
-  cout << "Applying MC JEC from file " << jecfile.c_str() << endl;
-  FactorizedJetCorrector *corr;
-  vector<JetCorrectorParameters> vpar;
-  // This is MCTruth (L2Relative)
-  vpar.push_back(JetCorrectorParameters(jecfile.c_str()));
-  // L2 residual for data only
+  cout << "Applying JEC corrections" << endl;
+  //FactorizedJetCorrector *corr;
+//vector<JetCorrectorParameters> vpar;
+//Lynn: I edited this to use https://github.com/thenicholasbarnett/Run3HeavyIonJetCalibrations framework
+//
+  vector<string> CorrectionFiles;
+
+  // L1 FastJet (pileup subtraction)
+  cout << "  L1: " << l1file.c_str() << endl;
+  CorrectionFiles.push_back(l1file);
+  //vpar.push_back(JetCorrectorParameters(l1file.c_str()));
+
+  // L2 Relative (eta-dependent response)
+  cout << "  L2Relative: " << l2relative.c_str() << endl;
+  //vpar.push_back(JetCorrectorParameters(jecfile.c_str()));
+  CorrectionFiles.push_back(l2relative);
+
+  // L2 Residual for data only (pT-dependent correction)
   if (!isMC) {
-    cout << "Applying L2 Residual from file " << l2file.c_str() << endl;
-    vpar.push_back(JetCorrectorParameters(l2file.c_str()));
+	CorrectionFiles.push_back(l2residual);
+   // cout << "  L2Residual: " << l2file.c_str() << endl;
+   // vpar.push_back(JetCorrectorParameters(l2file.c_str()));
   }
-  corr = new FactorizedJetCorrector(vpar);
+
+  //corr = new FactorizedJetCorrector(vpar);
+  JetCorrector JEC(CorrectionFiles);
 #endif
 
   // JER not needed for photon+jet L3 residual analysis
 
   // Jet veto map
-  auto mapfile = new TFile("jecfiles/Summer24Prompt24_RunBCDEFGHI.root","READ"); 
+  auto mapfile = new TFile("jecfiles/Winter24Prompt24_2024BCDEFGHI.root","READ"); 
   auto vetomap = (TH2D*)mapfile->Get("jetvetomap_all");
   
   // Null check for veto map
@@ -470,6 +510,13 @@ void analyse_PhotonJet(string input = "PHOTONHP",
 
     if (debug) {
       cout << "Processing event " << i << ", evt number: " << evt << endl;
+      cout << (float)i/nentries*100 << "%" << endl;
+    }
+    else{
+      if (i%1000 == 0){
+        cout << "Processing event " << i << " out of " << nentries << endl;
+	cout << (float)i/nentries*100 << "%" << endl;
+      }
     }
 
     // Photon+jet: need at least 1 photon and 1 jet
@@ -482,8 +529,8 @@ void analyse_PhotonJet(string input = "PHOTONHP",
     }
 
     eh->event_vz->Fill(vz, evtwt);
-    if (isMC)
-      eh->event_pthatwsgenweight->Fill(pthat, weight);
+    if (isMC && weight > 0)
+      eh->event_pthatwsgenweight->Fill(pthat, log10(weight));
 
     // This is photon+jet analysis
     double photon_pt, photon_eta, photon_phi, jet_pt, jet_eta, jet_phi, ptavgtp,
@@ -559,18 +606,23 @@ void analyse_PhotonJet(string input = "PHOTONHP",
       jtpt_uncorr[j] = jtpt[j];
 
 #if REDOJES == 1
-      // cout << "Applying JES" << endl;
-      corr->setJetPt(jtpt[j]);
-      // corr->setJetE(jteu[jetidx]);
-      corr->setJetEta(jteta[j]);
-      // 	 corr->setJetPhi(jthpi[j]);
+      JEC.SetJetPT(jtpt_uncorr[j]);
+      JEC.SetJetEta(jteta[j]);
+      JEC.SetJetPhi(jtphi[j]);  
+      JEC.SetJetArea(jtarea[j]);     
+      JEC.SetRho(rho);
 
-      vector<float> v = corr->getSubCorrections();
-      float jes = v.back();
+      //corr->setJetPt(jtpt[j]);
+      //corr->setJetEta(jteta[j]);
+      //corr->setJetA(jtarea[j]);
+      //corr->setRho(rho); 
+//
+    //  vector<float> v = corr->getSubCorrections();
+  //    float jes = v.back();
 
       //	 cout << "New jes correction jet pt: " << jtpt[j] << " " <<
       //jteta[j] << " "  << jes << endl;
-      jtpt[j] *= jes;
+      jtpt[j] = JEC.GetCorrectedPT();
 #endif
 
       // JER not applied for photon+jet L3 residual analysis
@@ -795,6 +847,19 @@ void analyse_PhotonJet(string input = "PHOTONHP",
           h->photonjet_ptavg->Fill(ptavgtp, evtwt);
           h->photonjet_alpha->Fill(alpha, evtwt);
 
+          // Weight-outlier diagnostic (unweighted fills - want the raw
+          // distribution of event weights entering the balance profiles,
+          // not a weight-weighted view of itself).
+          if (isMC && weight > 0) {
+            double logw = log10(weight);
+            h->photonjet_logweight->Fill(logw);
+            h->balance_vs_logweight->Fill(logw, balance);
+          }
+
+          if (isMC && h->pthat_vs_photonpt) {
+            h->pthat_vs_photonpt->Fill(photon_pt, pthat);
+          }
+
           // Trigger histograms
           if (HLT_Photon30) {
             h->HLTPhoton30->Fill(1, evtwt);
@@ -904,7 +969,9 @@ void analyse_PhotonJet(string input = "PHOTONHP",
             h->jet_eta->Fill(jteta[j], evtwt);
             h->jet_phi->Fill(jtphi[j], evtwt);
 
-            if (isMC) {
+            // refpt is 0 for reco jets with no gen-jet match; dividing by it
+            // would push inf/nan into the response profiles.
+            if (isMC && jtpt_gen[j] > 0) {
 
               h->genjet_pt->Fill(jtpt_gen[j], evtwt);
               h->genjet_eta->Fill(jteta_gen[j], evtwt);
@@ -915,8 +982,10 @@ void analyse_PhotonJet(string input = "PHOTONHP",
               h->ptres->Fill((jtpt[j] - jtpt_gen[j]) / jtpt_gen[j], evtwt);
 
               h->ptgenvsptreco->Fill(jtpt_gen[j], jtpt[j], evtwt);
-              h->ptrecovsweight->Fill(jtpt[j], weight);
-              h->ptgenvsweight->Fill(jtpt_gen[j], weight);
+              if (weight > 0) {
+                h->ptrecovsweight->Fill(jtpt[j], log10(weight));
+                h->ptgenvsweight->Fill(jtpt_gen[j], log10(weight));
+              }
 
               if (h->responses3D) {
                 h->responses3D->Fill(jtpt_gen[j], jteta_gen[j],
@@ -946,8 +1015,10 @@ void analyse_PhotonJet(string input = "PHOTONHP",
   }
   eh->Write();
 
-  // Write and close output file
-  outfile->Write();
+  // No outfile->Write() here: h->Write()/eh->Write() already wrote each
+  // subdirectory, and writing the file again on top of that stores a second
+  // cycle of every histogram (;1 and ;2), doubling the file size and the hadd
+  // work. analyse.cc and analyse_JER.cc write per-directory only, same as this.
   cout << "Wrote " << outputfilename.c_str() << endl;
   
   // Close file properly - TFile destructor handles all owned histogram cleanup

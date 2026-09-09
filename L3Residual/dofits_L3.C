@@ -76,10 +76,11 @@ TGraphErrors* cleanGraph(TGraphErrors* g) {
   return g;
 }
 
-void dofits_L3(TString inFileL3Derived = "L3_derived.root",
+void dofits_L3(TString inFileL3Derived = "L3_derived_TEST0825.root",
                double ptminG = 30.,
                double ptmaxG = 100.,
-               string outfilename = "L3Res_photonjet",
+               string outfilename = "L3Res_photonjet_TEST",
+	       string outfolder = "./",
                bool closure = false,
                string runLabel = "2024ppRef",
                string lumiLabel = "pp Reference",
@@ -100,7 +101,6 @@ void dofits_L3(TString inFileL3Derived = "L3_derived.root",
   extraText = doClosure ? "Closure Test" : "Preliminary";
   lumi_sqrtS = Form("%s, #sqrt{s} = 5.36 TeV", lumiLabel.c_str());
 
-  string outfolder = "L3fits_" + outfilename;
   string pngFolder = outfolder + "/pdf"; // keep folder name for compatibility
   string txtFolder = outfolder + "/textfiles";
   string rawFolder = outfolder + "/raw";
@@ -251,7 +251,6 @@ void dofits_L3(TString inFileL3Derived = "L3_derived.root",
             }
           }
         }
-
         // Get readable pT and eta bin ranges for labeling
         double ptBinLo = balance3D_mc->GetXaxis()->GetBinLowEdge(ptbin);
         double ptBinHi = balance3D_mc->GetXaxis()->GetBinLowEdge(ptbin+1);
@@ -287,8 +286,8 @@ void dofits_L3(TString inFileL3Derived = "L3_derived.root",
         TCanvas* cAlpha = new TCanvas(Form("cAlpha_pt%.0fto%.0f_eta%.3fto%.3f", ptBinLo, ptBinHi, etaBinLo, etaBinHi), 
                                        Form("cAlpha_pt%.0fto%.0f_eta%.3fto%.3f", ptBinLo, ptBinHi, etaBinLo, etaBinHi), 800, 600);
         cAlpha->cd();
-        hAlphaRatioNorm->SetMinimum(0.85);
-        hAlphaRatioNorm->SetMaximum(1.15);
+        hAlphaRatioNorm->SetMinimum(0.8);
+        hAlphaRatioNorm->SetMaximum(1.2);
         hAlphaRatioNorm->SetMarkerStyle(kFullCircle);
         hAlphaRatioNorm->SetMarkerColor(kBlue);
         hAlphaRatioNorm->SetLineColor(kBlue);
@@ -415,8 +414,8 @@ void dofits_L3(TString inFileL3Derived = "L3_derived.root",
     TCanvas* cAlphaOverlay = new TCanvas("cAlphaOverlay", "Normalized Ratio vs alpha (all pT bins)", 900, 700);
     cAlphaOverlay->cd();
     TH1D* hFrameAlpha = new TH1D("hFrameAlpha", ";#alpha;Normalized Ratio (/ ref #alpha)", 100, 0, 0.5);
-    hFrameAlpha->SetMinimum(0.85);
-    hFrameAlpha->SetMaximum(1.15);
+    hFrameAlpha->SetMinimum(0.8);
+    hFrameAlpha->SetMaximum(1.2);
     hFrameAlpha->Draw();
     TLine* lineRefOverlay = new TLine(0, 1.0, 0.5, 1.0);
     lineRefOverlay->SetLineStyle(kDashed);
@@ -435,7 +434,6 @@ void dofits_L3(TString inFileL3Derived = "L3_derived.root",
     // Store histograms for each pT bin
     map<int, TH1D*> hAlphaRatioNormCol;
     map<int, TGraphErrors*> gFitCol;
-    
     for (int ptbin = 1; ptbin <= nptbins; ++ptbin) {
       double ptBinLo = balance3D_mc->GetXaxis()->GetBinLowEdge(ptbin);
       double ptBinHi = balance3D_mc->GetXaxis()->GetBinLowEdge(ptbin+1);
@@ -600,8 +598,8 @@ void dofits_L3(TString inFileL3Derived = "L3_derived.root",
     ckFSR->cd();
     
     TH1D* hFramekFSR = new TH1D("hFramekFSR", ";p_{T}^{#gamma} (GeV);k_{FSR} (Normalized Ratio at #alpha#rightarrow0)", 100, 20, 600);
-    hFramekFSR->SetMinimum(0.95);
-    hFramekFSR->SetMaximum(1.05);
+    hFramekFSR->SetMinimum(0.8);
+    hFramekFSR->SetMaximum(1.2);
     hFramekFSR->Draw();
     
     TLine* linekFSR = new TLine(20, 1.0, 600, 1.0);
@@ -707,8 +705,8 @@ void dofits_L3(TString inFileL3Derived = "L3_derived.root",
 
     // Ratio plot
     TH1D* hFrame1 = new TH1D(Form("hFrame1_a%d", alphaBin), ";p_{T}^{#gamma} (GeV);Response (MC/Data)", 100, 20, 600);
-    hFrame1->SetMinimum(0.7);
-    hFrame1->SetMaximum(1.5);
+    hFrame1->SetMinimum(0.8);
+    hFrame1->SetMaximum(1.2);
     TCanvas* c1 = new TCanvas(Form("c1_a%d", alphaBin), Form("c1_a%d", alphaBin), 800, 600);
     c1->SetLogx();
     c1->cd();
@@ -748,9 +746,9 @@ void dofits_L3(TString inFileL3Derived = "L3_derived.root",
       if (hMcRaw && hDtRaw) {
         TCanvas* cRaw = new TCanvas(Form("cRaw_a%d", alphaBin), Form("cRaw_a%d", alphaBin), 800, 600);
         cRaw->SetLogx();
-        TH1D* frameRaw = new TH1D(Form("hFrameRaw_a%d", alphaBin), ";p_{T}^{#gamma} (GeV);Balance", 100, 20, 600);
+        TH1D* frameRaw = new TH1D(Form("hFrameRaw_a%d", alphaBin), ";p_{T}^{#gamma} (GeV);Balance", 100, 70, 700);
         frameRaw->SetMinimum(0.7);
-        frameRaw->SetMaximum(1.5);
+        frameRaw->SetMaximum(1.3);
         frameRaw->Draw();
         hMcRaw->SetMarkerStyle(kFullCircle);
         hMcRaw->SetMarkerColor(kBlue);
@@ -777,8 +775,8 @@ void dofits_L3(TString inFileL3Derived = "L3_derived.root",
 
     // Fits
     TH1D* hFrame2 = new TH1D(Form("hFrame2_a%d", alphaBin), ";p_{T}^{#gamma} (GeV);Response (MC/Data)", 100, 20, 600);
-    hFrame2->SetMinimum(0.7);
-    hFrame2->SetMaximum(1.5);
+    hFrame2->SetMinimum(0.8);
+    hFrame2->SetMaximum(1.2);
     TCanvas* c2 = new TCanvas(Form("c2_a%d", alphaBin), Form("c2_a%d", alphaBin), 800, 600);
     c2->SetLogx();
     c2->cd();
@@ -851,8 +849,8 @@ void dofits_L3(TString inFileL3Derived = "L3_derived.root",
     // Closure
     if (doClosure) {
       TH1D* hFrame3 = new TH1D(Form("hFrame3_a%d", alphaBin), ";p_{T}^{#gamma} (GeV);Corrected Response", 100, 20, 600);
-      hFrame3->SetMinimum(0.7);
-      hFrame3->SetMaximum(1.3);
+      hFrame3->SetMinimum(0.8);
+      hFrame3->SetMaximum(1.2);
       TCanvas* c3 = new TCanvas(Form("c3_a%d", alphaBin), Form("c3_a%d", alphaBin), 800, 600);
       c3->SetLogx();
       c3->cd();
@@ -1007,8 +1005,8 @@ void dofits_L3(TString inFileL3Derived = "L3_derived.root",
       cL3Res->cd();
       gStyle->SetPaintTextFormat("0.3f");
       h2dL3Res->SetMarkerSize(1.4);
-      h2dL3Res->SetMinimum(0.7);
-      h2dL3Res->SetMaximum(1.5);
+      h2dL3Res->SetMinimum(0.8);
+      h2dL3Res->SetMaximum(1.2);
       h2dL3Res->Draw("TEXTCOLZ");
       CMS_lumi(cL3Res, 0, 0);
       cL3Res->SaveAs(Form("%s/L3Res_%s_alpha%d_l3resmap_pt%.0fto%.0f_eta%.3fto%.3f.png", pngFolder.c_str(), _run.c_str(), alphaBin, ptMinAll, ptMaxAll, etaMinAll, etaMaxAll));

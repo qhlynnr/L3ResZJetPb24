@@ -1,0 +1,1 @@
+/eos/cms/store/group/phys_heavyions/nbarnett/HiForest/DATA/2024ppref/PPRefHardProbes0/crab_foresting_2024ppref_HP0_v1/260519_200643 AK4_photonjet_SMOKETEST 0 1 5 ak4PFJetAnalyzer/t false directory

@@ -229,6 +229,16 @@ class histograms {
   TH2D* ptgenvsweight;
 // Weight vs reco pT profile? scatter plot? reco pt vs weight and gen pt vs. weight?
 
+  // Diagnostics for the photon+jet MC weight-outlier check: is the balance
+  // profile average being dominated by a small number of large-weight events?
+  TH1D* photonjet_logweight;
+  TH2D* balance_vs_logweight;
+
+  // Diagnostic: does the generator pthat of selected photon+jet events track
+  // the reco photon pT, or do high-photon-pT bins get populated by migrated
+  // low-pthat events (steeply-falling-spectrum spillover)? MC only.
+  TH2D* pthat_vs_photonpt;
+
 
   TDirectory *dir;
 

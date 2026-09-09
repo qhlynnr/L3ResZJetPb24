@@ -78,6 +78,8 @@ void histograms::initializePointers() {
   
   // Weight histograms
   ptgenvsptreco = nullptr; ptrecovsweight = nullptr; ptgenvsweight = nullptr;
+  photonjet_logweight = nullptr; balance_vs_logweight = nullptr;
+  pthat_vs_photonpt = nullptr;
 }
 
 // Original constructor - backward compatible, creates all histograms
@@ -140,9 +142,26 @@ histograms::histograms(TDirectory *dir, float etamin, float etamax, float hibinm
   }
   
   // Weight histograms (common)
+  // NOTE: the weight axis here is log10(weight), not weight - a plain 0-0.1
+  // linear axis was found to catch essentially none of this MC sample's
+  // event weights (they all landed in the overflow bin), which is what
+  // motivated this diagnostic in the first place. log10(weight) covers the
+  // huge dynamic range a pT-hat-biased sample's weights can span.
   ptgenvsptreco = new TH2D("ptgenvsptreco","",200,0,1500,200,0,1500);
-  ptrecovsweight = new TH2D("ptrecovsweight","",200,0,1500,200,0,0.1);
-  ptgenvsweight = new TH2D("ptgenvsweight","",200,0,1500,200,0,0.1);
+  ptrecovsweight = new TH2D("ptrecovsweight","",200,0,1500,140,-10,4);
+  ptgenvsweight = new TH2D("ptgenvsweight","",200,0,1500,140,-10,4);
+
+  // Weight-outlier diagnostic: is the photon+jet balance average dominated
+  // by a handful of large-weight events? photonjet_logweight is the plain
+  // distribution of log10(weight) for events entering the balance profiles;
+  // balance_vs_logweight correlates each event's weight with its balance so
+  // outlier events (large weight, low balance) show up directly.
+  photonjet_logweight = new TH1D("photonjet_logweight", "log_{10}(weight); log_{10}(weight);", 140, -10, 4);
+  balance_vs_logweight = new TH2D("balance_vs_logweight", "; log_{10}(weight); balance", 140, -10, 4, 100, 0, 2);
+
+  if (ismc) {
+    pthat_vs_photonpt = new TH2D("pthat_vs_photonpt", "; photon p_{T} (reco); pthat", 100, 0, 500, 100, 0, 500);
+  }
 
   // ============================================
   // DIJET-SPECIFIC HISTOGRAMS
