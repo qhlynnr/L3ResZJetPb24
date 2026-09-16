@@ -331,11 +331,15 @@ void deriveL3_from_photonjet(
     return;
   }
 
-  if (!mc3dJetPt[etabins[i].c_str()] || !data3dJetPt[etabins[i].c_str()]) {
-    cout << "ERROR: Missing required direct jet-pT photon+jet balance profiles "
-            "in the input files."
+  const bool haveJetPtProfiles =
+      mc3dJetPt[etabins[i].c_str()] && data3dJetPt[etabins[i].c_str()];
+  if (!haveJetPtProfiles) {
+    cout << "WARNING: direct jet-pT photon+jet balance profiles "
+            "(*_jetpt) not found in the input files - skipping the "
+            "vsjetpt diagnostic series (balance_vsjetpt_*, ratio_vsjetpt_*, "
+            "ratio_norm_vsjetpt_*). The primary pTref series L3Res.C needs "
+            "is unaffected."
          << endl;
-    return;
   }
 
   cout
@@ -621,6 +625,11 @@ void deriveL3_from_photonjet(
   ///jet_pT/photon_pT)
   ///////////////// for cumulative alpha cuts
 
+  if (!haveJetPtProfiles) {
+    cout << "\n===== Skipping Balance vs Leading Jet pT (no *_jetpt input) ====="
+         << endl;
+  } else {
+
   cout << "\n===== Balance vs Leading Jet pT for cumulative alpha cuts ====="
        << endl;
 
@@ -711,6 +720,8 @@ void deriveL3_from_photonjet(
     }
   }
 
+  } // haveJetPtProfiles
+
   // NOTE: This macro does not write a JEC text file.
   // The final text outputs are produced by L3Res.C and
   // createL2L3ResTextFile.C after the alpha fits and the JetPt remap.
@@ -791,8 +802,10 @@ void deriveL3_from_photonjet(
   // Save original 3D histograms for reference
   mc3d[etabins[i].c_str()]->Write("balance3D_mc");
   data3d[etabins[i].c_str()]->Write("balance3D_data");
-  mc3dJetPt[etabins[i].c_str()]->Write("balance3D_jetpt_mc");
-  data3dJetPt[etabins[i].c_str()]->Write("balance3D_jetpt_data");
+  if (haveJetPtProfiles) {
+    mc3dJetPt[etabins[i].c_str()]->Write("balance3D_jetpt_mc");
+    data3dJetPt[etabins[i].c_str()]->Write("balance3D_jetpt_data");
+  }
 
   // Save counts histograms if available
   if (counts_mc3d[etabins[i].c_str()])

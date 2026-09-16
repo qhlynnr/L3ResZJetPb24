@@ -1,6 +1,6 @@
 #!/bin/bash
-filepath="/eos/cms/store/group/phys_heavyions/xirong/L3Residuals/Histograms/"
-outfilepath="/eos/cms/store/group/phys_heavyions/xirong/L3Residuals/MergedHistograms/"
+filepath="/afs/cern.ch/user/x/xirong/CMSSW_14_1_9_patch2/src/residualanalysis/Outputs/L3FillHistOutputs/0914Histograms_allPD_rougherbins/"
+outfilepath="/afs/cern.ch/user/x/xirong/CMSSW_14_1_9_patch2/src/residualanalysis/Outputs/L3FillHistOutputs/0914MergedHists_allPD_rougherbins/"
 
-hadd -f "$outfilepath/AK4_photojet_HP0_0827Merged.root" "$filepath"/AK4_photonjet_HP0_batch*_of_46.root
-hadd -f "$outfilepath/Ak4_photojet_MC_0827Merged.root" "$filepath"/AK4_photonjet_MC_batch*_of_7.root
+#hadd -f "$outfilepath/AK4_photonjet_Data.root" "$filepath"/AK4_photonjet_HP*.root
+hadd -f "$outfilepath/Ak4_photonjet_MC.root" "$filepath"/AK4_photonjet_MC*.root

@@ -24,6 +24,24 @@ root -l -b -q compile.C
 
 ### Run Analysis
 
+0916 Newest Updates:
+
+To Run analysis, go into fillhistogram folder
+Change path.sh to be your local path
+Change run.sh so that input MC and Data path matches your input MC and data path
+Instructions are within run.sh. For test run, run:
+./run.sh test mc
+./run.sh test data
+And for full run, run:
+./run.sh submit mc
+./run.sh submit data
+
+To merge the files, use merge.sh in the fillhistogram folder.
+
+After histograms are filled, go into L3ResidualNew and edit the run.sh input path. Once done, run 
+./run.sh all 
+
+
 #### Single File (Legacy Era Mode)
 ```bash
 root -l -b -q 'analyse_PhotonJet.cc("PHOTONHP", "output_tag", false, false)'

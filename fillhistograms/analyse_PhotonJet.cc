@@ -22,8 +22,9 @@ using std::endl;
 #include "input_config.h"
 #include "chain_builder.h"
 #include "JetCorrector.h"
+#include "JetSelection.h"
 
-
+#include <TH1.h>
 #include <random>
 #include "CondFormats/JetMETObjects/interface/FactorizedJetCorrector.h"
 
@@ -93,6 +94,7 @@ void analyse_PhotonJet(string input = "PHOTONHP",
                        int maxEvents = -1, string outputDir = "",
                        int batchIndex = -1, int totalBatches = 1,
                        string jetPath = "ak4PFJetAnalyzer/t") {
+  TH1::SetDefaultSumw2(kTRUE);
 
   bool usecalotrig = false;
   bool checkvalidjet =
@@ -286,6 +288,10 @@ void analyse_PhotonJet(string input = "PHOTONHP",
 
 
   Int_t jtchm[MAXJETS]; // charged multiplicity
+  Int_t jtnhm[MAXJETS];
+  Int_t jtnem[MAXJETS];
+  Int_t jtcem[MAXJETS]; 
+  Int_t jtmum[MAXJETS]; 
 
   Int_t jtn[MAXJETS];
 
@@ -309,13 +315,23 @@ void analyse_PhotonJet(string input = "PHOTONHP",
   jetTree->SetBranchAddress("jtPfNEF", &jtnef);
   jetTree->SetBranchAddress("jtPfCEF", &jtcef);
   jetTree->SetBranchAddress("jtPfMUF", &jtmuf);
+
   jetTree->SetBranchAddress("jtPfCHM", &jtchm);
+  jetTree->SetBranchAddress("jtPfNHM", &jtnhm);
+  jetTree->SetBranchAddress("jtPfNEM", &jtnem);
+  jetTree->SetBranchAddress("jtPfCEM", &jtcem);
+  jetTree->SetBranchAddress("jtPfMUM", &jtmum);
+
   jetTree->SetBranchStatus("jtPfNHF", 1);
   jetTree->SetBranchStatus("jtPfCHF", 1);
   jetTree->SetBranchStatus("jtPfNEF", 1);
   jetTree->SetBranchStatus("jtPfCEF", 1);
   jetTree->SetBranchStatus("jtPfMUF", 1);
   jetTree->SetBranchStatus("jtPfCHM", 1);
+  jetTree->SetBranchStatus("jtPfCEM", 1);
+  jetTree->SetBranchStatus("jtPfNHM", 1);
+  jetTree->SetBranchStatus("jtPfNEM", 1);
+  jetTree->SetBranchStatus("jtPfMUM", 1);
 
   // Gen level jet information
   Float_t jtpt_gen[MAXJETS];
@@ -462,9 +478,10 @@ void analyse_PhotonJet(string input = "PHOTONHP",
   // JER not needed for photon+jet L3 residual analysis
 
   // Jet veto map
+  string JetVetoMap = "jecfiles/Winter24Prompt24_2024BCDEFGHI.root";
   auto mapfile = new TFile("jecfiles/Winter24Prompt24_2024BCDEFGHI.root","READ"); 
   auto vetomap = (TH2D*)mapfile->Get("jetvetomap_all");
-  
+  JetSelect js(JetVetoMap);
   // Null check for veto map
   if (applyjetvetomap && (!mapfile || mapfile->IsZombie() || !vetomap)) {
     cerr << "WARNING: Veto map unavailable, disabling veto map selection" << endl;
@@ -482,7 +499,6 @@ void analyse_PhotonJet(string input = "PHOTONHP",
   cout << "Processing " << nentries << " events" << endl;
   for (Long64_t i = 0; i < nentries; ++i) {
     evtTree->GetEntry(i);
-//    triggerTree->GetEntry(i);
     photonTree->GetEntry(i);
 
     // Photon trigger logic
@@ -557,52 +573,14 @@ void analyse_PhotonJet(string input = "PHOTONHP",
     }
 
     // JET ID - this is 2023 AK4CHS jet selection 12/2024
+    // No longer true. This is following twiki on JetID13p6TeV in 2024
     // fill passjteta for all jets in the event?
     bool passjetid[nref];
-    for (int j = 0; j < nref; ++j) {
-      passjetid[j] = true;
-      if (checkjetid) {
-        if (abs(jteta[j]) <= 2.6) {
-          if (jtnhf[j] >= 0.99)
-            passjetid[j] = false;
-          if (jtnef[j] >= 0.9)
-            passjetid[j] = false;
-          if (jtchf[j] <= 0.01)
-            passjetid[j] = false;
-          if (jtcef[j] >= 0.8)
-            passjetid[j] = false;
-          if (jtmuf[j] >= 0.8)
-            passjetid[j] = false;
-          if (jtchm[j] <= 0)
-            passjetid[j] = false;
-        } else if (abs(jteta[j]) <= 2.7) {
-          if (jtnhf[j] >= 0.9)
-            passjetid[j] = false;
-          if (jtnef[j] >= 0.99)
-            passjetid[j] = false;
-          if (jtmuf[j] >= 0.8)
-            passjetid[j] = false;
-          if (jtcef[j] >= 0.8)
-            passjetid[j] = false;
-
-        } else if (abs(jteta[j]) <= 3.0) {
-          if (jtnhf[j] >= 0.99)
-            passjetid[j] = false;
-          if (jtnef[j] >= 0.99)
-            passjetid[j] = false;
-        } else if (abs(jteta[j]) <= 5.0) {
-          if (jtnef[j] >= 0.4)
-            passjetid[j] = false;
-        }
-        //	   if (jtpt[j] > jtptmin)	   cout << passjetid[j] << endl;
-        //  if (passjetid[j] < 2 and nref > 2  and jtpt[j] > 70  and jtpt[1] >
-        //  40) cout << "Pass jetid: " << passjetid[j] << " pt: " << jtpt[j] <<
-        //  " " << jteta[j] << " " << j << " " << i <<  endl;
-      }
-    }
 
     // Apply JEC
     for (int j = 0; j < nref; ++j) {
+    if(!js.JetSelection_pp(jteta[j], jtphi[j], jtcef[j], jtnef[j],jtmuf[j],
+     	jtnhf[j], jtchf[j], jtchm[j],jtcem[j],jtmum[j])){continue;}
       jtpt_uncorr[j] = jtpt[j];
 
 #if REDOJES == 1

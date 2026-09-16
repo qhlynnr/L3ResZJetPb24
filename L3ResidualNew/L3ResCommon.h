@@ -33,6 +33,13 @@ struct PreparedInput {
   double etaMin = 0.0;
   double etaMax = 0.0;
   bool haveEtaRange = false;
+  // False when the input's ratio_vsjetpt_alpha* series is missing (upstream
+  // deriveL3_from_photonjet.C could not find the *_jetpt profiles needed to
+  // build it) - the vsjetpt diagnostic fields below stay null in that case,
+  // and the combined jetpt fit/plots are skipped entirely. The primary
+  // vsptref pipeline (what createL2L3ResTextFile.C actually reads) is
+  // unaffected.
+  bool haveJetPt = false;
   TH1D *refRatioHist = nullptr;
   TH1D *refJetRatioHist = nullptr;
   TH1D *corrHist = nullptr;

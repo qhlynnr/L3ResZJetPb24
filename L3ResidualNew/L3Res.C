@@ -419,7 +419,7 @@ void L3Res(TString inFileL3Derived = "L3_derived.root",
         rawMc->GetXaxis()->GetBinLowEdge(1),
         rawMc->GetXaxis()->GetBinLowEdge(rawMc->GetNbinsX() + 1));
     frame->SetMinimum(0.7);
-    frame->SetMaximum(1.3);
+    frame->SetMaximum(1.02);
     frame->GetXaxis()->SetMoreLogLabels(kTRUE);
     frame->GetXaxis()->SetNoExponent(kTRUE);
     styleFrameAxes(frame);
@@ -641,6 +641,80 @@ void L3Res(TString inFileL3Derived = "L3_derived.root",
     delete frame;
   };
 
+  // Purpose: draw the raw (not alpha->0 extrapolated) reference-alpha
+  // response vs |eta|, overlaid for each pTref bin. This reuses the
+  // ratio_pt<ptrange>_alpha<cut> histograms deriveL3_from_photonjet.C already
+  // writes but L3Res.C otherwise never reads.
+  auto saveEtaRawOverlay = [&](const PreparedInput &prepared,
+                               const map<int, TH1D *> &etaSeries,
+                               TAxis *ptAxisForEta,
+                               const string &inputPdfFolder) {
+    if (etaSeries.empty())
+      return;
+
+    TCanvas canvas(Form("cEtaOverlay_%s", prepared.token.Data()),
+                   Form("cEtaOverlay_%s", prepared.token.Data()), 900, 700);
+
+    TH1D *frame = new TH1D(
+        Form("hEtaOverlay_%s", prepared.token.Data()),
+        Form(";#eta;%s", responseAxisLabel(prepared).Data()), 100,
+        prepared.etaMin, prepared.etaMax);
+    frame->SetMinimum(0.7);
+    frame->SetMaximum(1.5);
+    styleFrameAxes(frame);
+    frame->Draw();
+
+    TLine unity(prepared.etaMin, 1.0, prepared.etaMax, 1.0);
+    unity.SetLineStyle(kDashed);
+    unity.SetLineColor(kGray + 1);
+    unity.Draw("SAME");
+
+    TLegend legend(0.56, 0.15, 0.88, 0.45);
+    legend.SetBorderSize(0);
+    legend.SetFillStyle(0);
+    legend.SetTextFont(42);
+    legend.SetTextSize(0.026);
+
+    int colorIndex = 0;
+    for (const auto &entry : etaSeries) {
+      TH1D *hist = entry.second;
+      hist->SetMarkerStyle(markers[colorIndex % markerCount]);
+      hist->SetMarkerSize(0.8);
+      hist->SetMarkerColor(colors[colorIndex % colorCount]);
+      hist->SetLineColor(colors[colorIndex % colorCount]);
+      hist->Draw("PE1 SAME");
+
+      const int ptBin = entry.first;
+      legend.AddEntry(hist,
+                      Form("p_{T}^{ref}: %.0f-%.0f GeV",
+                           ptAxisForEta->GetBinLowEdge(ptBin),
+                           ptAxisForEta->GetBinLowEdge(ptBin + 1)),
+                      "PE");
+      ++colorIndex;
+    }
+
+    TLatex label;
+    label.SetNDC();
+    label.SetTextFont(42);
+    label.SetTextSize(0.032);
+    label.DrawLatex(0.18, 0.86, prepared.label.Data());
+    label.DrawLatex(
+        0.18, 0.81,
+        Form("#alpha_{ref} < %.2f (bin %d), raw - not #alpha#rightarrow0 "
+             "corrected",
+             prepared.refAlphaValue, refAlphaBin));
+    label.DrawLatex(0.18, 0.76,
+                    Form("%s = B_{%s}^{Data} / B_{%s}^{MC}",
+                         responseAxisLabel(prepared).Data(),
+                         prepared.label.Data(), prepared.label.Data()));
+    legend.Draw();
+    drawCmsLabel(canvas);
+    canvas.SaveAs(Form("%s/L3Res_%s_ratio_raw_vseta.png", inputPdfFolder.c_str(),
+                       prepared.token.Data()));
+
+    delete frame;
+  };
+
   vector<PreparedInput> preparedInputs;
   preparedInputs.reserve(inputFiles.size());
 
@@ -694,17 +768,53 @@ void L3Res(TString inFileL3Derived = "L3_derived.root",
         balance3D->GetYaxis()->GetNbins() + 1);
     prepared.haveEtaRange = (prepared.etaMax > prepared.etaMin);
 
+    // Purpose: pull the raw (ref-alpha, not alpha->0 extrapolated) response
+    // vs |eta| for each pTref bin, if deriveL3_from_photonjet.C wrote them.
+    map<int, TH1D *> etaRatioByPt;
+    TAxis *ptAxisForEta = balance3D->GetXaxis();
+    {
+      // Matches the "alpha%.2f" tag deriveL3_from_photonjet.C builds from a
+      // float alphaCutValue when naming ratio_pt<range>_alpha<cut>.
+      const float alphaCutValueForEta = (float)prepared.refAlphaValue;
+      const TString alphaTagForEta = Form("alpha%.2f", alphaCutValueForEta);
+      for (int ptBin = 1; ptBin <= ptAxisForEta->GetNbins(); ++ptBin) {
+        const TString ptTag = Form("%.0fto%.0f",
+                                   ptAxisForEta->GetBinLowEdge(ptBin),
+                                   ptAxisForEta->GetBinLowEdge(ptBin + 1));
+        const TString histName =
+            Form("ratio_pt%s_%s", ptTag.Data(), alphaTagForEta.Data());
+        TH1D *sourceHist = (TH1D *)inputFile->Get(histName);
+        if (!sourceHist)
+          continue;
+        TH1D *clone = (TH1D *)sourceHist->Clone(Form("%s_clone", histName.Data()));
+        clone->SetDirectory(nullptr);
+        etaRatioByPt[ptBin] = clone;
+      }
+      if (etaRatioByPt.empty()) {
+        cout << "INFO: ratio_pt*_alpha* (vs eta) histograms missing in "
+             << prepared.path
+             << "; skipping the raw JES-vs-eta diagnostic plot." << endl;
+      }
+    }
+
     map<int, TH1D *> ratioSeries =
         loadSeries(inputFile, "ratio_vsptref_alpha", prepared.path);
     map<int, TH1D *> jetRatioSeries =
         loadSeries(inputFile, "ratio_vsjetpt_alpha", prepared.path);
-    if (ratioSeries.empty() || jetRatioSeries.empty()) {
-      cout
-          << "ERROR: Missing required ratio_vsptref or ratio_vsjetpt series in "
-          << prepared.path << endl;
+    if (ratioSeries.empty()) {
+      cout << "ERROR: Missing required ratio_vsptref series in "
+           << prepared.path << endl;
       inputFile->Close();
       delete inputFile;
       return;
+    }
+    prepared.haveJetPt =
+        !jetRatioSeries.empty() && jetRatioSeries.count(refAlphaBin) > 0;
+    if (!prepared.haveJetPt) {
+      cout << "INFO: ratio_vsjetpt_alpha* missing or incomplete in "
+           << prepared.path
+           << "; skipping the vsjetpt diagnostic series for this input."
+           << endl;
     }
     map<int, TH1D *> ratioNormSeries =
         loadSeries(inputFile, "ratio_norm_vsptref_alpha", prepared.path, false);
@@ -714,21 +824,27 @@ void L3Res(TString inFileL3Derived = "L3_derived.root",
       ratioNormSeries = normalizeSeriesByReference(
           ratioSeries, refAlphaBin, "ratio_norm_vsptref_alpha", prepared.path);
     }
-    map<int, TH1D *> jetRatioNormSeries =
-        loadSeries(inputFile, "ratio_norm_vsjetpt_alpha", prepared.path, false);
-    if (jetRatioNormSeries.empty()) {
-      cout << "INFO: ratio_norm_vsjetpt_alpha* missing in " << prepared.path
-           << "; building conservative normalized series in memory." << endl;
-      jetRatioNormSeries =
-          normalizeSeriesByReference(jetRatioSeries, refAlphaBin,
-                                     "ratio_norm_vsjetpt_alpha", prepared.path);
+    map<int, TH1D *> jetRatioNormSeries;
+    if (prepared.haveJetPt) {
+      jetRatioNormSeries = loadSeries(inputFile, "ratio_norm_vsjetpt_alpha",
+                                      prepared.path, false);
+      if (jetRatioNormSeries.empty()) {
+        cout << "INFO: ratio_norm_vsjetpt_alpha* missing in " << prepared.path
+             << "; building conservative normalized series in memory." << endl;
+        jetRatioNormSeries =
+            normalizeSeriesByReference(jetRatioSeries, refAlphaBin,
+                                       "ratio_norm_vsjetpt_alpha", prepared.path);
+      }
+      if (jetRatioNormSeries.empty()) {
+        prepared.haveJetPt = false;
+      }
     }
-    if (ratioNormSeries.empty() || jetRatioNormSeries.empty()) {
+    if (ratioNormSeries.empty()) {
       inputFile->Close();
       delete inputFile;
       return;
     }
-    if (!ratioSeries.count(refAlphaBin) || !jetRatioSeries.count(refAlphaBin)) {
+    if (!ratioSeries.count(refAlphaBin)) {
       cout << "ERROR: Missing the requested reference alpha bin " << refAlphaBin
            << " in " << prepared.path << endl;
       inputFile->Close();
@@ -738,16 +854,18 @@ void L3Res(TString inFileL3Derived = "L3_derived.root",
 
     prepared.refRatioHist = cloneRequiredHist(
         inputFile, Form("ratio_vsptref_alpha%d", refAlphaBin), prepared.path);
-    prepared.refJetRatioHist = cloneRequiredHist(
-        inputFile, Form("ratio_vsjetpt_alpha%d", refAlphaBin), prepared.path);
+    if (prepared.haveJetPt) {
+      prepared.refJetRatioHist = cloneRequiredHist(
+          inputFile, Form("ratio_vsjetpt_alpha%d", refAlphaBin), prepared.path);
+      if (!prepared.refJetRatioHist) prepared.haveJetPt = false;
+    }
     TH1D *rawMc = cloneRequiredHist(
         inputFile, Form("balance_vsptref_mc_alpha%d", refAlphaBin),
         prepared.path);
     TH1D *rawDt = cloneRequiredHist(
         inputFile, Form("balance_vsptref_data_alpha%d", refAlphaBin),
         prepared.path);
-    if (!prepared.refRatioHist || !prepared.refJetRatioHist || !rawMc ||
-        !rawDt) {
+    if (!prepared.refRatioHist || !rawMc || !rawDt) {
       inputFile->Close();
       delete inputFile;
       return;
@@ -758,6 +876,7 @@ void L3Res(TString inFileL3Derived = "L3_derived.root",
         prepared.refRatioHist);
     saveRatioOverlay(prepared, ratioSeries, alphaEdges, inputPdfFolder);
     saveRefRawOverlay(prepared, rawMc, rawDt, inputPdfFolder);
+    saveEtaRawOverlay(prepared, etaRatioByPt, ptAxisForEta, inputPdfFolder);
 
     prepared.kfsrHist = (TH1D *)prepared.refRatioHist->Clone(
         Form("kFSR_vsptref_%s", prepared.token.Data()));
@@ -767,14 +886,16 @@ void L3Res(TString inFileL3Derived = "L3_derived.root",
         Form("corr_vsptref_%s", prepared.token.Data()));
     prepared.corrHist->Reset();
     prepared.corrHist->SetDirectory(nullptr);
-    prepared.kfsrJetHist = (TH1D *)prepared.refJetRatioHist->Clone(
-        Form("kFSR_vsjetpt_%s", prepared.token.Data()));
-    prepared.kfsrJetHist->Reset();
-    prepared.kfsrJetHist->SetDirectory(nullptr);
-    prepared.corrJetHist = (TH1D *)prepared.refJetRatioHist->Clone(
-        Form("corr_vsjetpt_%s", prepared.token.Data()));
-    prepared.corrJetHist->Reset();
-    prepared.corrJetHist->SetDirectory(nullptr);
+    if (prepared.haveJetPt) {
+      prepared.kfsrJetHist = (TH1D *)prepared.refJetRatioHist->Clone(
+          Form("kFSR_vsjetpt_%s", prepared.token.Data()));
+      prepared.kfsrJetHist->Reset();
+      prepared.kfsrJetHist->SetDirectory(nullptr);
+      prepared.corrJetHist = (TH1D *)prepared.refJetRatioHist->Clone(
+          Form("corr_vsjetpt_%s", prepared.token.Data()));
+      prepared.corrJetHist->Reset();
+      prepared.corrJetHist->SetDirectory(nullptr);
+    }
 
     TDirectory *inputDir =
         outputFile->mkdir(Form("input_%s", prepared.token.Data()));
@@ -788,9 +909,14 @@ void L3Res(TString inFileL3Derived = "L3_derived.root",
 
     inputDir->cd();
     prepared.refRatioHist->Write("ratio_vsptref_refalpha");
-    prepared.refJetRatioHist->Write("ratio_vsjetpt_refalpha");
+    if (prepared.haveJetPt) {
+      prepared.refJetRatioHist->Write("ratio_vsjetpt_refalpha");
+    }
     rawMc->Write("balance_vsptref_mc_refalpha");
     rawDt->Write("balance_vsptref_data_refalpha");
+    for (auto &entry : etaRatioByPt) {
+      entry.second->Write(Form("ratio_vseta_ptbin%d_refalpha", entry.first));
+    }
 
     auto fillCorrectedResponse =
         [&](TH1D *refHist, const map<int, TH1D *> &normalizedAxisRatioSeries,
@@ -900,14 +1026,18 @@ void L3Res(TString inFileL3Derived = "L3_derived.root",
     fillCorrectedResponse(prepared.refRatioHist, ratioNormSeries,
                           prepared.kfsrHist, prepared.corrHist,
                           "gAlphaNormPtRef", true);
-    fillCorrectedResponse(prepared.refJetRatioHist, jetRatioNormSeries,
-                          prepared.kfsrJetHist, prepared.corrJetHist,
-                          "gAlphaNormJetPt", false);
+    if (prepared.haveJetPt) {
+      fillCorrectedResponse(prepared.refJetRatioHist, jetRatioNormSeries,
+                            prepared.kfsrJetHist, prepared.corrJetHist,
+                            "gAlphaNormJetPt", false);
+    }
 
     prepared.kfsrHist->Write("kFSR_vsptref");
     prepared.corrHist->Write("corr_vsptref");
-    prepared.kfsrJetHist->Write("kFSR_vsjetpt");
-    prepared.corrJetHist->Write("corr_vsjetpt");
+    if (prepared.haveJetPt) {
+      prepared.kfsrJetHist->Write("kFSR_vsjetpt");
+      prepared.corrJetHist->Write("corr_vsjetpt");
+    }
     saveKfsrSummary(prepared, alphaFolder);
     saveCorrSummary(prepared, alphaFolder);
 
@@ -928,25 +1058,31 @@ void L3Res(TString inFileL3Derived = "L3_derived.root",
 
     prepared.displayGraph->Write("g_ptref_display");
     prepared.fitGraph->Write("g_ptref_fit");
-    FitWindow jetWindow = parseFitWindow("", prepared.refJetRatioHist);
-    prepared.displayJetGraph = buildWindowedGraph(
-        prepared.corrJetHist, jetWindow, true,
-        markers[inputIndex % markerCount], colors[inputIndex % colorCount]);
-    prepared.fitJetGraph = buildWindowedGraph(
-        prepared.corrJetHist, jetWindow, true,
-        markers[inputIndex % markerCount], colors[inputIndex % colorCount]);
-    if (!prepared.fitJetGraph || prepared.fitJetGraph->GetN() < 3) {
-      cout << "ERROR: Not enough valid JetPt points for input '"
-           << prepared.label << "'." << endl;
-      inputFile->Close();
-      delete inputFile;
-      return;
+    if (prepared.haveJetPt) {
+      FitWindow jetWindow = parseFitWindow("", prepared.refJetRatioHist);
+      prepared.displayJetGraph = buildWindowedGraph(
+          prepared.corrJetHist, jetWindow, true,
+          markers[inputIndex % markerCount], colors[inputIndex % colorCount]);
+      prepared.fitJetGraph = buildWindowedGraph(
+          prepared.corrJetHist, jetWindow, true,
+          markers[inputIndex % markerCount], colors[inputIndex % colorCount]);
+      if (!prepared.fitJetGraph || prepared.fitJetGraph->GetN() < 3) {
+        cout << "INFO: Not enough valid JetPt points for input '"
+             << prepared.label
+             << "'; dropping its vsjetpt diagnostic series." << endl;
+        prepared.haveJetPt = false;
+        prepared.displayJetGraph = nullptr;
+        prepared.fitJetGraph = nullptr;
+      } else {
+        prepared.displayJetGraph->Write("g_jetpt_display");
+        prepared.fitJetGraph->Write("g_jetpt_fit");
+      }
     }
-    prepared.displayJetGraph->Write("g_jetpt_display");
-    prepared.fitJetGraph->Write("g_jetpt_fit");
     outputFile->cd();
     preparedInputs.push_back(prepared);
 
+    for (auto &entry : etaRatioByPt)
+      delete entry.second;
     for (auto &entry : ratioSeries)
       delete entry.second;
     for (auto &entry : jetRatioSeries)
@@ -976,11 +1112,8 @@ void L3Res(TString inFileL3Derived = "L3_derived.root",
       preparedInputs.front().refRatioHist->GetXaxis()->GetBinLowEdge(1);
   double xMax = preparedInputs.front().refRatioHist->GetXaxis()->GetBinLowEdge(
       preparedInputs.front().refRatioHist->GetNbinsX() + 1);
-  double jetXMin =
-      preparedInputs.front().refJetRatioHist->GetXaxis()->GetBinLowEdge(1);
-  double jetXMax =
-      preparedInputs.front().refJetRatioHist->GetXaxis()->GetBinLowEdge(
-          preparedInputs.front().refJetRatioHist->GetNbinsX() + 1);
+  double jetXMin = 1e18;
+  double jetXMax = -1e18;
   double etaMinOut = preparedInputs.front().etaMin;
   double etaMaxOut = preparedInputs.front().etaMax;
   bool haveEtaRange = preparedInputs.front().haveEtaRange;
@@ -991,6 +1124,7 @@ void L3Res(TString inFileL3Derived = "L3_derived.root",
   double yMax = -1e9;
   TGraphErrors *combinedJetGraph = new TGraphErrors();
   int combinedJetPoint = 0;
+  bool anyJetPt = false;
 
   for (size_t inputIndex = 0; inputIndex < preparedInputs.size();
        ++inputIndex) {
@@ -1003,14 +1137,17 @@ void L3Res(TString inFileL3Derived = "L3_derived.root",
         xMax,
         preparedInputs[inputIndex].refRatioHist->GetXaxis()->GetBinLowEdge(
             preparedInputs[inputIndex].refRatioHist->GetNbinsX() + 1));
-    jetXMin = std::min(
-        jetXMin,
-        preparedInputs[inputIndex].refJetRatioHist->GetXaxis()->GetBinLowEdge(
-            1));
-    jetXMax = std::max(
-        jetXMax,
-        preparedInputs[inputIndex].refJetRatioHist->GetXaxis()->GetBinLowEdge(
-            preparedInputs[inputIndex].refJetRatioHist->GetNbinsX() + 1));
+    if (preparedInputs[inputIndex].haveJetPt) {
+      anyJetPt = true;
+      jetXMin = std::min(
+          jetXMin,
+          preparedInputs[inputIndex].refJetRatioHist->GetXaxis()->GetBinLowEdge(
+              1));
+      jetXMax = std::max(
+          jetXMax,
+          preparedInputs[inputIndex].refJetRatioHist->GetXaxis()->GetBinLowEdge(
+              preparedInputs[inputIndex].refJetRatioHist->GetNbinsX() + 1));
+    }
 
     if (preparedInputs[inputIndex].haveEtaRange) {
       etaMinOut = std::min(etaMinOut, preparedInputs[inputIndex].etaMin);
@@ -1039,17 +1176,19 @@ void L3Res(TString inFileL3Derived = "L3_derived.root",
                       preparedInputs[inputIndex].displayGraph->GetY()[point]);
     }
 
-    for (int point = 0; point < preparedInputs[inputIndex].fitJetGraph->GetN();
-         ++point) {
-      combinedJetGraph->SetPoint(
-          combinedJetPoint,
-          preparedInputs[inputIndex].fitJetGraph->GetX()[point],
-          preparedInputs[inputIndex].fitJetGraph->GetY()[point]);
-      combinedJetGraph->SetPointError(
-          combinedJetPoint,
-          preparedInputs[inputIndex].fitJetGraph->GetEX()[point],
-          preparedInputs[inputIndex].fitJetGraph->GetEY()[point]);
-      ++combinedJetPoint;
+    if (preparedInputs[inputIndex].haveJetPt) {
+      for (int point = 0;
+           point < preparedInputs[inputIndex].fitJetGraph->GetN(); ++point) {
+        combinedJetGraph->SetPoint(
+            combinedJetPoint,
+            preparedInputs[inputIndex].fitJetGraph->GetX()[point],
+            preparedInputs[inputIndex].fitJetGraph->GetY()[point]);
+        combinedJetGraph->SetPointError(
+            combinedJetPoint,
+            preparedInputs[inputIndex].fitJetGraph->GetEX()[point],
+            preparedInputs[inputIndex].fitJetGraph->GetEY()[point]);
+        ++combinedJetPoint;
+      }
     }
   }
 
@@ -1063,14 +1202,11 @@ void L3Res(TString inFileL3Derived = "L3_derived.root",
     return;
   }
 
-  if (combinedJetGraph->GetN() < 3) {
-    cout << "ERROR: The combined JetPt graph has fewer than three points."
+  if (anyJetPt && combinedJetGraph->GetN() < 3) {
+    cout << "WARNING: The combined JetPt graph has fewer than three points; "
+            "dropping the vsjetpt diagnostic output."
          << endl;
-    outputFile->Close();
-    delete outputFile;
-    delete combinedGraph;
-    delete combinedJetGraph;
-    return;
+    anyJetPt = false;
   }
 
   const double yLowerMargin = 0.08;
@@ -1174,8 +1310,10 @@ void L3Res(TString inFileL3Derived = "L3_derived.root",
   outputFile->cd();
   combinedGraph->SetName("g_ptref_combined");
   combinedGraph->Write();
-  combinedJetGraph->SetName("g_jetpt_combined");
-  combinedJetGraph->Write();
+  if (anyJetPt) {
+    combinedJetGraph->SetName("g_jetpt_combined");
+    combinedJetGraph->Write();
+  }
   fitResult.f0->Write("f_ptref_f0");
   fitResult.f1->Write("f_ptref_f1");
   fitResult.f2->Write("f_ptref_f2");
