@@ -24,22 +24,58 @@ root -l -b -q compile.C
 
 ### Run Analysis
 
-0916 Newest Updates:
+#### Photon+jet L3 residual workflow (2024 ppRef, updated 2026-11-23)
 
-To Run analysis, go into fillhistogram folder
-Change path.sh to be your local path
-Change run.sh so that input MC and Data path matches your input MC and data path
-Instructions are within run.sh. For test run, run:
-./run.sh test mc
-./run.sh test data
-And for full run, run:
-./run.sh submit mc
-./run.sh submit data
+Full details of `run.sh`, the event selection and the binning are in
+[`fillhistograms/README.md`](fillhistograms/README.md).
 
-To merge the files, use merge.sh in the fillhistogram folder.
+**1. Fill histograms** (`fillhistograms/`)
 
-After histograms are filled, go into L3ResidualNew and edit the run.sh input path. Once done, run 
-./run.sh all 
+- Edit `paths.sh`: set `OUTPUT_DIR` for this production. `MERGED_DIR`
+  (`$OUTPUT_DIR/Merged/`) and `LOG_DIR` (`$OUTPUT_DIR/Log/`) follow from it.
+- Edit `run.sh` so the MC and data input paths match your samples, and set
+  `ANALYSIS_DIR` in `run_photonjet_job.sh` to your checkout.
+- Test, then submit:
+  ```bash
+  ./run.sh test mc
+  ./run.sh test data
+  ./run.sh submit mc
+  ./run.sh submit data        # all five HardProbes streams by default
+  STREAMS="0" ./run.sh submit # or a subset
+  ```
+  `submit` compiles `histograms.C`, `eventhistograms.C` and
+  `analyse_PhotonJet.cc` once, serially, before queuing jobs, so the Condor
+  jobs don't race to rebuild the shared `.so` files.
+- Jobs now run with jet ID on (`checkjetid = true`), the data-only
+  `pprimaryVertexFilter`, and `MAXJETS = 250` (the old 50 segfaulted on
+  noisy run-387445 events).
+- pT<sub>ref</sub> binning: 50, 60, 70, 80, 90, 100, 125, 150, 175, 200,
+  300, 400, 500, 600 GeV. The histograms also carry `*_jetpt` profiles
+  (balance binned in leading-jet pT).
+- To resubmit only failed batches, list them in `photonjet_jobs_rerun.txt`
+  and `condor_submit condor_photonjet_rerun.sub`.
+
+**2. Merge** with `./merge_histograms.sh` (set `filepath` to `OUTPUT_DIR`;
+writes `AK4_photonjet_Data.root` and `Ak4_photonjet_MC.root` to
+`$filepath/Merged/`).
+
+**3. Derive and fit L3** (`L3ResidualNew/`)
+
+Edit the paths at the top of `run.sh` (`InputDir`, `DeriveOutFile`,
+`OutFolder`, `L2ResidualFile`), then:
+```bash
+./run.sh all      # or: ./run.sh derive / ./run.sh fit
+```
+`derive` now also writes `balance_vsabseta_*` histograms (MC/Data balance
+and Data/MC vs fine |η| per pT bin), and `L3Res.C` plots them, plus the
+response vs leading-jet pT next to the pT<sub>ref</sub> series. Fit text
+files land in `Outputs/DoFitOutput/<tag>/L3Res_Fits/textfiles/`.
+
+**4. Sanity plots** (optional): data vs MC photon pT and Δφ(γ, jet),
+shape-normalised, with ratio panels:
+```bash
+root -l -b -q 'plotSanity.C("Data.root", "MC.root", "outdir")'
+```
 
 
 #### Single File (Legacy Era Mode)

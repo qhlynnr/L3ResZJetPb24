@@ -176,6 +176,75 @@ void normalizeHistogramByReferenceBin(TH1D *hist, int referenceBin) {
   }
 }
 
+// Purpose: write MC/Data balance and their Data/MC ratio vs |eta| for every
+// pT bin of a fine-|eta| profile pair, keeping only the first nEtaKeep |eta|
+// bins (the range covered by the profile used for the fit). axisTag names the
+// pT axis in the output ("ptref" or "jetpt"). Empty bins stay at 0 so they are
+// not drawn as points.
+void writeBalanceVsAbsEta(TProfile3D *mc, TProfile3D *data, int alphaBin,
+                          int nEtaKeep, const char *axisTag,
+                          const char *axisTitle) {
+  if (!mc || !data || nEtaKeep < 1) {
+    return;
+  }
+
+  TAxis *etaAxis = mc->GetYaxis();
+  std::vector<double> etaEdges(nEtaKeep + 1);
+  for (int bin = 1; bin <= nEtaKeep + 1; ++bin) {
+    etaEdges[bin - 1] = etaAxis->GetBinLowEdge(bin);
+  }
+
+  TAxis *ptAxis = mc->GetXaxis();
+  const double alphaCut = mc->GetZaxis()->GetBinLowEdge(alphaBin + 1);
+  for (int ptbin = 1; ptbin <= ptAxis->GetNbins(); ++ptbin) {
+    const double ptLow = ptAxis->GetBinLowEdge(ptbin);
+    const double ptHigh = ptAxis->GetBinLowEdge(ptbin + 1);
+    const TString tag = Form("%s%.0fto%.0f", axisTag, ptLow, ptHigh);
+
+    TH1D *h_mc = new TH1D(
+        Form("balance_vsabseta_mc_%s", tag.Data()),
+        Form("MC balance, %s %.0f-%.0f GeV (#alpha < %.2f);|#eta_{jet}|;"
+             "Balance",
+             axisTitle, ptLow, ptHigh, alphaCut),
+        nEtaKeep, etaEdges.data());
+    TH1D *h_data = new TH1D(
+        Form("balance_vsabseta_data_%s", tag.Data()),
+        Form("Data balance, %s %.0f-%.0f GeV (#alpha < %.2f);|#eta_{jet}|;"
+             "Balance",
+             axisTitle, ptLow, ptHigh, alphaCut),
+        nEtaKeep, etaEdges.data());
+
+    for (int etabin = 1; etabin <= nEtaKeep; ++etabin) {
+      const int globalBin = mc->GetBin(ptbin, etabin, alphaBin);
+      const double mcVal = mc->GetBinContent(globalBin);
+      const double mcErr = mc->GetBinError(globalBin);
+      if (mc->GetBinEntries(globalBin) > 0 && !TMath::IsNaN(mcVal) &&
+          mcVal > 0) {
+        h_mc->SetBinContent(etabin, mcVal);
+        h_mc->SetBinError(etabin, TMath::IsNaN(mcErr) ? 0. : mcErr);
+      }
+      const double dtVal = data->GetBinContent(globalBin);
+      const double dtErr = data->GetBinError(globalBin);
+      if (data->GetBinEntries(globalBin) > 0 && !TMath::IsNaN(dtVal) &&
+          dtVal > 0) {
+        h_data->SetBinContent(etabin, dtVal);
+        h_data->SetBinError(etabin, TMath::IsNaN(dtErr) ? 0. : dtErr);
+      }
+    }
+
+    TH1D *h_ratio = (TH1D *)h_data->Clone(Form("ratio_vsabseta_%s", tag.Data()));
+    h_ratio->SetTitle(Form("Data/MC, %s %.0f-%.0f GeV (#alpha < %.2f);"
+                           "|#eta_{jet}|;Data/MC",
+                           axisTitle, ptLow, ptHigh, alphaCut));
+    h_ratio->Divide(h_mc);
+    sanitizeRatioHistogram(h_ratio, h_data, h_mc, 0.0);
+
+    h_mc->Write();
+    h_data->Write();
+    h_ratio->Write();
+  }
+}
+
 } // namespace
 
 void deriveL3_from_photonjet(
@@ -346,6 +415,29 @@ void deriveL3_from_photonjet(
       << "Using direct jet-pT photon+jet balance profiles for jet-pT derivation"
       << endl;
 
+  // Fine-|eta| profiles used only for the balance-vs-|eta| diagnostics, read
+  // regardless of useabs/usewideabs so the plots keep their |eta| shape even
+  // when the fit runs on the single wide |eta| bin.
+  TProfile3D *mc3dAbsEta = (TProfile3D *)inFileMC->Get(
+      "hibin_-1.0_0.0/eta_-5.2_5.2/photonjet_balance3Dabseta");
+  TProfile3D *data3dAbsEta = (TProfile3D *)inFileDT->Get(
+      "hibin_-1.0_0.0/eta_-5.2_5.2/photonjet_balance3Dabseta");
+  TProfile3D *mc3dAbsEtaJetPt = (TProfile3D *)inFileMC->Get(
+      "hibin_-1.0_0.0/eta_-5.2_5.2/photonjet_balance3Dabseta_jetpt");
+  TProfile3D *data3dAbsEtaJetPt = (TProfile3D *)inFileDT->Get(
+      "hibin_-1.0_0.0/eta_-5.2_5.2/photonjet_balance3Dabseta_jetpt");
+  const bool haveAbsEtaProfiles = mc3dAbsEta && data3dAbsEta;
+  const bool haveAbsEtaJetPtProfiles = mc3dAbsEtaJetPt && data3dAbsEtaJetPt;
+  if (!haveAbsEtaProfiles) {
+    cout << "WARNING: photonjet_balance3Dabseta not found in the input files - "
+            "skipping the balance_vsabseta_* diagnostics."
+         << endl;
+  } else if (!haveAbsEtaJetPtProfiles) {
+    cout << "WARNING: photonjet_balance3Dabseta_jetpt not found in the input "
+            "files - skipping the jet-pT balance_vsabseta_* diagnostics."
+         << endl;
+  }
+
   cout << etabins[i]
        << " MC nptbins: " << mc3d[etabins[i].c_str()]->GetXaxis()->GetNbins()
        << endl;
@@ -439,6 +531,29 @@ void deriveL3_from_photonjet(
     l3res_eta->Write();
     respETA[ptbin]->Write(
         Form("ratio_pt%s_%s", ptstr.c_str(), alphastr.c_str()));
+  }
+
+  ///////////////// Balance vs fine |eta| in bins of pTref and jet pT
+  // Restrict to the |eta| range of the fit profile (0.01 tolerance for the
+  // 1.300 vs 1.305 edge between the wide and fine binnings).
+  if (haveAbsEtaProfiles) {
+    const double fitEtaMax = mc3d[etabins[i].c_str()]->GetYaxis()->GetXmax();
+    TAxis *fineEtaAxis = mc3dAbsEta->GetYaxis();
+    int nEtaKeep = 0;
+    while (nEtaKeep < fineEtaAxis->GetNbins() &&
+           fineEtaAxis->GetBinUpEdge(nEtaKeep + 1) <= fitEtaMax + 0.01) {
+      ++nEtaKeep;
+    }
+    cout << "\n===== Balance vs |eta| (fine binning): " << nEtaKeep
+         << " |eta| bins, 0 to " << fineEtaAxis->GetBinUpEdge(nEtaKeep)
+         << " =====" << endl;
+
+    writeBalanceVsAbsEta(mc3dAbsEta, data3dAbsEta, refAlphaBin, nEtaKeep,
+                         "ptref", "p_{T}^{ref}");
+    if (haveAbsEtaJetPtProfiles) {
+      writeBalanceVsAbsEta(mc3dAbsEtaJetPt, data3dAbsEtaJetPt, refAlphaBin,
+                           nEtaKeep, "jetpt", "p_{T}^{jet}");
+    }
   }
 
   ///////////////// Balance vs alpha in bins of pT and eta (for ISR/FSR studies)
@@ -805,6 +920,14 @@ void deriveL3_from_photonjet(
   if (haveJetPtProfiles) {
     mc3dJetPt[etabins[i].c_str()]->Write("balance3D_jetpt_mc");
     data3dJetPt[etabins[i].c_str()]->Write("balance3D_jetpt_data");
+  }
+  if (haveAbsEtaProfiles) {
+    mc3dAbsEta->Write("balance3D_abseta_mc");
+    data3dAbsEta->Write("balance3D_abseta_data");
+  }
+  if (haveAbsEtaProfiles && haveAbsEtaJetPtProfiles) {
+    mc3dAbsEtaJetPt->Write("balance3D_abseta_jetpt_mc");
+    data3dAbsEtaJetPt->Write("balance3D_abseta_jetpt_data");
   }
 
   // Save counts histograms if available

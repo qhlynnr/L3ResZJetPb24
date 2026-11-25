@@ -23,7 +23,7 @@ INPUT_TYPE=${8:-filelist}
 
 # ---- paths ----
 CMSSW_DIR="/afs/cern.ch/user/x/xirong/CMSSW_14_1_9_patch2/src"
-ANALYSIS_DIR="${CMSSW_DIR}/residualanalysis/fillhistograms"
+ANALYSIS_DIR="${CMSSW_DIR}/residualanalysis_old/fillhistograms"
 # OUTPUT_DIR / LOG_DIR come from paths.sh, shared with run.sh so that
 # `./run.sh merge` looks where the jobs actually wrote.
 source "${ANALYSIS_DIR}/paths.sh"
@@ -99,7 +99,7 @@ export LD_LIBRARY_PATH="${ANALYSIS_DIR}/nssstub:\${LD_LIBRARY_PATH}"
 
 # Signature: (input, outputfiletag, isMC, checkjetid, inputType, maxFiles,
 #             maxEvents, outputDir, batchIndex, totalBatches, jetPath)
-root -l -b -q "analyse_PhotonJet.cc+(\"${FILELIST}\", \"${OUTPUT_TAG}\", ${IS_MC}, false, \"${INPUT_TYPE}\", ${FILES_PER_JOB}, -1, \"${OUTPUT_DIR}/\", ${BATCH_INDEX}, ${TOTAL_BATCHES}, \"${JET_TREE}\")"
+root -l -b -q "analyse_PhotonJet.cc+(\"${FILELIST}\", \"${OUTPUT_TAG}\", ${IS_MC}, true, \"${INPUT_TYPE}\", ${FILES_PER_JOB}, -1, \"${OUTPUT_DIR}/\", ${BATCH_INDEX}, ${TOTAL_BATCHES}, \"${JET_TREE}\")"
 EOF
 
 /cvmfs/cms.cern.ch/common/cmssw-el8 --command-to-run "bash ${INNER_SCRIPT}"

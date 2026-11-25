@@ -16,7 +16,10 @@ string scaleFactorFile = "";
 TString vetomapFile = "jecfiles/";
 
 
-int MAXJETS = 50;
+// Size of the per-event jet arrays. Some 2024 ppRef HardProbes files (the
+// first ~200 of each stream) have events with nref up to ~195, which
+// overflowed the old value of 50 and segfaulted the batch-0 jobs.
+int MAXJETS = 250;
 
 float akradius = 0.4;
 Float_t jtptmin = 15.;

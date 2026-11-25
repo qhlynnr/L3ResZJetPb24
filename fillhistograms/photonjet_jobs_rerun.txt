@@ -1,0 +1,5 @@
+/eos/cms/store/group/phys_heavyions/nbarnett/HiForest/DATA/2024ppref/PPRefHardProbes0/crab_foresting_2024ppref_HP0_v1/260519_200643 AK4_photonjet_HP0 0 20 200 ak4PFJetAnalyzer/t false directory
+/eos/cms/store/group/phys_heavyions/nbarnett/HiForest/DATA/2024ppref/PPRefHardProbes1/crab_foresting_2024ppref_HP1_v0/260519_203030 AK4_photonjet_HP1 0 20 200 ak4PFJetAnalyzer/t false directory
+/eos/cms/store/group/phys_heavyions/nbarnett/HiForest/DATA/2024ppref/PPRefHardProbes2/crab_foresting_2024ppref_HP2_v0/260519_203309 AK4_photonjet_HP2 0 20 200 ak4PFJetAnalyzer/t false directory
+/eos/cms/store/group/phys_heavyions/nbarnett/HiForest/DATA/2024ppref/PPRefHardProbes3/crab_foresting_2024ppref_HP3_v0/260519_203425 AK4_photonjet_HP3 0 20 200 ak4PFJetAnalyzer/t false directory
+/eos/cms/store/group/phys_heavyions/nbarnett/HiForest/DATA/2024ppref/PPRefHardProbes4/crab_foresting_2024ppref_HP4_v0/260519_203459 AK4_photonjet_HP4 0 20 200 ak4PFJetAnalyzer/t false directory

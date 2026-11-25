@@ -245,12 +245,16 @@ void analyse_PhotonJet(string input = "PHOTONHP",
   }
 
   //// EVENT FILTERS
-  // auto skimTree = (TTree*)inFile->Get(skimPath.c_str());
-  // if (!isMC) skimTree->SetBranchStatus("*",1);
-
-  // Int_t pprimaryVertexFilter = 1;
-  // if (!isMC) skimTree->SetBranchAddress("pprimaryVertexFilter",
-  // &pprimaryVertexFilter);
+  // Primary vertex filter, data only: the 2024 ppRef MC forest has no
+  // skimanalysis/HltTree. In data it removes e.g. the part of run 387445
+  // with no reconstructed tracks (CHF = 0 for every jet), which also holds
+  // noise events with 100+ calorimeter-only jets.
+  Int_t pprimaryVertexFilter = 1;
+  if (!isMC) {
+    skimTree->SetBranchStatus("*", 0);
+    skimTree->SetBranchStatus("pprimaryVertexFilter", 1);
+    skimTree->SetBranchAddress("pprimaryVertexFilter", &pprimaryVertexFilter);
+  }
 
   Int_t trigger = 0;
 
@@ -497,6 +501,8 @@ void analyse_PhotonJet(string input = "PHOTONHP",
     nentries = 1000;
 
   cout << "Processing " << nentries << " events" << endl;
+  Long64_t nSkippedMaxJets = 0;
+  Long64_t nFailPV = 0;
   for (Long64_t i = 0; i < nentries; ++i) {
     evtTree->GetEntry(i);
     photonTree->GetEntry(i);
@@ -518,10 +524,21 @@ void analyse_PhotonJet(string input = "PHOTONHP",
     // cout << weight << " " << evtwt << endl;
 
     // BASIC EVENT FILTERS
-    //  if (!isMC) {
-    //    skimTree->GetEntry(i);
-    //    if (pprimaryVertexFilter != 1) continue;
-    //  }
+    if (!isMC) {
+      skimTree->GetEntry(i);
+      if (pprimaryVertexFilter != 1) {
+        ++nFailPV;
+        continue;
+      }
+    }
+    // Read nref alone first: a full GetEntry on an event with more than
+    // MAXJETS jets writes past the end of the jet arrays and corrupts memory.
+    Long64_t localEntry = jetTree->LoadTree(i);
+    jetTree->GetTree()->GetBranch("nref")->GetEntry(localEntry);
+    if (nref > MAXJETS) {
+      ++nSkippedMaxJets;
+      continue;
+    }
     jetTree->GetEntry(i);
 
     if (debug) {
@@ -574,13 +591,16 @@ void analyse_PhotonJet(string input = "PHOTONHP",
 
     // JET ID - this is 2023 AK4CHS jet selection 12/2024
     // No longer true. This is following twiki on JetID13p6TeV in 2024
-    // fill passjteta for all jets in the event?
+    // JetSelection_pp = jet ID + per-jet veto map. Only record the result
+    // here - every jet still gets JEC, so a failing jet can't leak into the
+    // away-side search / alpha with its uncorrected pT.
     bool passjetid[nref];
 
     // Apply JEC
     for (int j = 0; j < nref; ++j) {
-    if(!js.JetSelection_pp(jteta[j], jtphi[j], jtcef[j], jtnef[j],jtmuf[j],
-     	jtnhf[j], jtchf[j], jtchm[j],jtcem[j],jtmum[j])){continue;}
+      passjetid[j] = js.JetSelection_pp(jteta[j], jtphi[j], jtcef[j], jtnef[j],
+                                        jtmuf[j], jtnhf[j], jtchf[j], jtchm[j],
+                                        jtcem[j], jtmum[j]);
       jtpt_uncorr[j] = jtpt[j];
 
 #if REDOJES == 1
@@ -674,11 +694,9 @@ void analyse_PhotonJet(string input = "PHOTONHP",
     int awayJetIndices[MAXJETS];
     int nAwayJets = 0;
 
+    // Jet ID is applied to the probe after sorting (below), not here: skipping
+    // a failing jet here would promote the next away-side jet to probe.
     for (int j = 0; j < nref; j++) {
-      // Apply jet ID
-      if (checkjetid && passjetid[j] == 0)
-        continue;
-
       // Jet kinematic cuts
       if (jtpt[j] < 15.0)
         continue; // Minimum jet pT
@@ -720,6 +738,9 @@ void analyse_PhotonJet(string input = "PHOTONHP",
 
     // Leading away-side jet (probe jet)
     int awayJetIdx = awayJetIndices[0];
+    // Reject the event if the probe fails jet ID
+    if (checkjetid && !passjetid[awayJetIdx])
+      continue;
 
     // 3. Calculate alpha (using 2nd away-side jet if available)
     alpha = 0;
@@ -891,11 +912,29 @@ void analyse_PhotonJet(string input = "PHOTONHP",
               if (alpha < alphaThreshold) {
                 // Fill balance profiles (weighted)
                 h->photonjet_balance3D->Fill(ptavgtp, jet_eta, alphaFillValue, balance, evtwt);
-                h->photonjet_balance3Dwide->Fill(ptavgtp, jet_eta, alphaFillValue, balance, evtwt);
-                h->photonjet_balance3Dnarrow->Fill(ptavgtp, jet_eta, alphaFillValue, balance, evtwt);
+                h->photonjet_balance3Dwide->Fill(ptavgtp, jet_eta, alphaFillValue, balance, evtwt);			h->photonjet_balance3Dnarrow->Fill(ptavgtp, jet_eta, alphaFillValue, balance, evtwt);
                 h->photonjet_balance3Dabseta->Fill(ptavgtp, abs(jet_eta), alphaFillValue, balance, evtwt);
                 h->photonjet_balance3Dabsetawide->Fill(ptavgtp, abs(jet_eta), alphaFillValue, balance, evtwt);
                 h->photonjet_balance3Dabsetanarrow->Fill(ptavgtp, abs(jet_eta), alphaFillValue, balance, evtwt);
+		 if (h->photonjet_balance3D_jetpt)
+                  h->photonjet_balance3D_jetpt->Fill(
+                      jet_pt, jet_eta, alphaFillValue, balance, evtwt);
+                if (h->photonjet_balance3Dwide_jetpt)
+                  h->photonjet_balance3Dwide_jetpt->Fill(
+                      jet_pt, jet_eta, alphaFillValue, balance, evtwt);
+                if (h->photonjet_balance3Dnarrow_jetpt)
+                  h->photonjet_balance3Dnarrow_jetpt->Fill(
+                      jet_pt, jet_eta, alphaFillValue, balance, evtwt);
+                if (h->photonjet_balance3Dabseta_jetpt)
+                  h->photonjet_balance3Dabseta_jetpt->Fill(
+                      jet_pt, abs(jet_eta), alphaFillValue, balance, evtwt);
+                if (h->photonjet_balance3Dabsetawide_jetpt)
+                  h->photonjet_balance3Dabsetawide_jetpt->Fill(
+                      jet_pt, abs(jet_eta), alphaFillValue, balance, evtwt);
+                if (h->photonjet_balance3Dabsetanarrow_jetpt)
+                  h->photonjet_balance3Dabsetanarrow_jetpt->Fill(
+                      jet_pt, abs(jet_eta), alphaFillValue, balance, evtwt);
+
                 
                 // Fill counts histograms (UNWEIGHTED - just count entries)
                 if (h->photonjet_balance3D_counts) h->photonjet_balance3D_counts->Fill(ptavgtp, jet_eta, alphaFillValue);
@@ -925,11 +964,13 @@ void analyse_PhotonJet(string input = "PHOTONHP",
 
             h->jetetaphi->Fill(jteta[j], jtphi[j], weight);
 
-            if (j == 0 and passjetid[0]) {
-              // Photon trigger check; leading jet pt
-              if (HLT_Photon30)
-                h->HLTPhoton30->Fill(jtpt[awayJetIndices[0]], evtwt);
-            }
+            // Disabled: HLTPhoton30 is a 2-bin counter histogram, so filling
+            // it with a jet pT just dumps every entry into the overflow bin.
+            // if (j == 0 and passjetid[0]) {
+            //   // Photon trigger check; leading jet pt
+            //   if (HLT_Photon30)
+            //     h->HLTPhoton30->Fill(jtpt[awayJetIndices[0]], evtwt);
+            // }
 
             // These are actually obsolete after all the selections
             /*	       if (j == 0 and nref > 1 and dphitp > 2.7) { // Fill dijet
@@ -983,6 +1024,12 @@ void analyse_PhotonJet(string input = "PHOTONHP",
       }
     }
   } // end of event loop
+
+  if (!isMC)
+    cout << "Primary vertex filter rejected " << nFailPV << " events" << endl;
+  if (nSkippedMaxJets > 0)
+    cout << "WARNING: skipped " << nSkippedMaxJets
+         << " events with nref > MAXJETS (" << MAXJETS << ")" << endl;
 
   // Write output histograms
 

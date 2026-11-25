@@ -14,19 +14,19 @@ Mode="${1:-all}"
 # *_jetpt profiles happen to be present upstream in fillhistograms,
 # jetpt) response inputs from the merged MC/data histogram files.
 # ------------------------------------------------------------------
-InputDir=/afs/cern.ch/user/x/xirong/CMSSW_14_1_9_patch2/src/residualanalysis/Outputs/L3FillHistOutputs/0914MergedHists_allPD_rougherbins/
-McFile=$InputDir/AK4_photonjet_MC.root
+InputDir=/afs/cern.ch/user/x/xirong/CMSSW_14_1_9_patch2/src/residualanalysis_old/Outputs/L3FillHistOutputs/1123_PtRef50to600_PVfilter/Merged/
+McFile=$InputDir/Ak4_photonjet_MC.root
 DataFile=$InputDir/AK4_photonjet_Data.root
-DeriveOutFile=/afs/cern.ch/user/x/xirong/CMSSW_14_1_9_patch2/src/residualanalysis/Outputs/DeriveL3Outpus/L3ResidualBharad_0914DeriveL3_allPD.root
+DeriveOutFile=/afs/cern.ch/user/x/xirong/CMSSW_14_1_9_patch2/src/residualanalysis_old/Outputs/DeriveL3Outputs/L3Residual_1123_PtRef50to600_PVfilter_eta1p3_DeriveL3.root
 UseAbs=true
-UseWideAbs=false
+UseWideAbs=true
 
 # ------------------------------------------------------------------
 # Step 2: dofits_L3.C - fit the pTref series and export the L3/L2L3
 # text payloads (calls L3Res.C then createL2L3ResTextFile.C).
 # ------------------------------------------------------------------
 InFile="$DeriveOutFile"
-OutFolder=/afs/cern.ch/user/x/xirong/CMSSW_14_1_9_patch2/src/residualanalysis/Outputs/DoFitOutput/L3Residual0914_AllPD_rougherbins/
+OutFolder=/afs/cern.ch/user/x/xirong/CMSSW_14_1_9_patch2/src/residualanalysis_old/Outputs/DoFitOutput/L3Residual1123_PtRef50to600_PVfilter_eta1p3/
 OutFile=L3Res_Fits
 
 SampleTypes=photonjet
@@ -40,7 +40,7 @@ FitAlphaMax=0.35
 # Real L2Residual file used to lay out the L2L3Residual export (the macro's
 # built-in default path is stale/missing the 2024PPRefUpToDateCorrections
 # subfolder, so this must be passed explicitly).
-L2ResidualFile=/afs/cern.ch/user/x/xirong/CMSSW_14_1_9_patch2/src/residualanalysis/fillhistograms/jecfiles/2024PPRefUpToDateCorrections/Prompt24HIpp_V1_DATA_L2Residual_AK4PF.txt
+L2ResidualFile=/afs/cern.ch/user/x/xirong/CMSSW_14_1_9_patch2/src/residualanalysis_old/fillhistograms/jecfiles/2024PPRefUpToDateCorrections/Prompt24HIpp_V1_DATA_L2Residual_AK4PF.txt
 
 # '+' (ACLiC) is required, not optional, on both steps: running these plain
 # interpreted crashes Cling with a segfault (llvm::orc JIT) once the

@@ -9,9 +9,10 @@
 #OUTPUT_DIR="/eos/cms/store/group/phys_heavyions/xirong/L3Residuals/L3FillHistogramOutputs/0907Histograms/"
 #MERGED_DIR="/eos/cms/store/group/phys_heavyions/xirong/L3Residuals/L3FillHistogramOutputs/0907MergedHistograms/"
 
-OUTPUT_DIR="/afs/cern.ch/user/x/xirong/CMSSW_14_1_9_patch2/src/residualanalysis/Outputs/L3FillHistOutputs/0914Histograms_allPD_rougherbins/"
-MERGED_DIR="/afs/cern.ch/user/x/xirong/CMSSW_14_1_9_patch2/src/residualanalysis/Outputs/L3FillHistOutputs/0914MergedHists_allPD_rougherbins/"
-LOG_DIR="/eos/cms/store/group/phys_heavyions/xirong/L3Residuals/L3FillHistogram/logs/0914/"
+OUTPUT_DIR="/afs/cern.ch/user/x/xirong/CMSSW_14_1_9_patch2/src/residualanalysis_old/Outputs/L3FillHistOutputs/1123_PtRef50to600_PVfilter/"
+MERGED_DIR="$OUTPUT_DIR/Merged/"
+LOG_DIR="$OUTPUT_DIR/Log/"
 
 mkdir -p $OUTPUT_DIR
 mkdir -p $MERGED_DIR
+mkdir -p $LOG_DIR

@@ -156,6 +156,12 @@ class histograms {
   TH3D* photonjet_balance3Dabseta_counts;
   TH3D* photonjet_balance3Dabsetawide_counts;
   TH3D* photonjet_balance3Dabsetanarrow_counts;
+  TProfile3D *photonjet_balance3D_jetpt;
+  TProfile3D *photonjet_balance3Dwide_jetpt;
+  TProfile3D *photonjet_balance3Dnarrow_jetpt;
+  TProfile3D *photonjet_balance3Dabseta_jetpt;
+  TProfile3D *photonjet_balance3Dabsetawide_jetpt;
+  TProfile3D *photonjet_balance3Dabsetanarrow_jetpt;
 
   // Photon trigger histograms
   TH1D* HLTPhoton30;
@@ -242,9 +248,11 @@ class histograms {
 
   TDirectory *dir;
 
-  static constexpr double etarange[] = {    -5.191,-4.889,-4.716,-4.538,-4.363,-4.191,-4.013,-3.839,-3.664,-3.489,-3.314,-3.139,-2.964,-2.853,-2.65,-2.5,-2.322,-2.172,-2.043,-1.93,-1.83,-1.74,-1.653,-1.566,-1.479,-1.392,-1.305,-1.218,-1.131,-1.044,-0.957,-0.870,-0.783,-0.696,-0.609,-0.522,-0.435,-0.348,-0.261,-0.174,-0.087,
+static constexpr double etarange[] = {    -5.191,-4.889,-4.716,-4.538,-4.363,-4.191,-4.013,-3.839,-3.664,-3.489,-3.314,-3.139,-2.964,-2.853,-2.65,-2.5,-2.322,-2.172,-2.043,-1.93,-1.83,-1.74,-1.653,-1.566,-1.479,-1.392,-1.305,-1.218,-1.131,-1.044,-0.957,-0.870,-0.783,-0.696,-0.609,-0.522,-0.435,-0.348,-0.261,-0.174,-0.087,
      0.000, 0.087, 0.174, 0.261, 0.348, 0.435, 0.522, 0.609, 0.696, 0.783, 0.870, 0.957, 1.044, 1.131, 1.218,1.305, 1.392, 1.479, 1.566, 1.653, 1.74, 1.83, 1.93, 2.043, 2.172, 2.322, 2.5,2.65, 2.853, 2.964, 3.139, 3.314, 3.489, 3.664, 3.839, 4.013, 4.191, 4.363,4.538, 4.716, 4.889, 5.191
   };
+/*static constexpr double etarange[] = {-1.300,-1.218,-1.131,-1.044,-0.957,-0.870,-0.783,-0.696,-0.609,-0.522,-0.435,-0.348,-0.261,-0.174,-0.087,
+     0.000, 0.087, 0.174, 0.261, 0.348, 0.435, 0.522, 0.609, 0.696, 0.783, 0.870, 0.957, 1.044, 1.131, 1.218,1.300};*/
   static constexpr unsigned int netas = sizeof(etarange)/sizeof(etarange[0])-1;
 
     static constexpr double absetarange[] = {0.000, 0.087, 0.174, 0.261, 0.348, 0.435, 0.522, 0.609, 0.696, 0.783, 0.870, 0.957, 1.044, 1.131, 1.218,1.305, 1.392, 1.479, 1.566, 1.653, 1.74, 1.83, 1.93, 2.043, 2.172, 2.322, 2.5,2.65, 2.853, 2.964, 3.139, 3.314, 3.489, 3.664, 3.839, 4.013, 4.191, 4.363,4.538, 4.716, 4.889, 5.191  };
@@ -290,11 +298,13 @@ class histograms {
   static constexpr unsigned int netaforjer = sizeof(etaforjer)/sizeof(etaforjer[0])-1;
 
   // Should one try narrower bins first too?
-  //   static constexpr double ptforjec[] = {40, 60, 80, 100, 120, 140, 180, 220, 300, 500, 700, 5000};
+     //static constexpr double ptforjec[] = {40,50,60,70,80,90,100,120,140,160,200};
+     //static constexpr double ptforjec[] = {60,65,70,75,80,85,90,95,100,120,140,160,200,300,400,500,600};
+     static constexpr double ptforjec[] = {50,60,70,80,90,100,125,150,175,200,300,400,500,600};
   //  static constexpr double ptforjec[] = {40, 55, 80, 120, 170, 1000};
   //  static constexpr double ptforjec[] = {15 , 25, 55, 80, 120, 170, 1000};   // Low pT as Nick
     // static constexpr double ptforjec[] = {15, 25, 80, 120, 1000};   // Low pT as Nick
-  static constexpr double ptforjec[] = {60, 70, 80, 90, 100, 120, 140, 160, 200, 300,400,500,600}; // Photon pT bins Bharad
+  //static constexpr double ptforjec[] = {60, 70, 80, 90, 100, 120, 140, 160, 200, 300,400,500,600}; // Photon pT bins Bharad
   static constexpr unsigned int nptforjec = sizeof(ptforjec)/sizeof(ptforjec[0])-1;
 
   //  static constexpr double ptforJER[] = {15, 21, 28, 37, 49, 64, 84, 114, 153, 196, 245, 300, 362, 430, 507, 592, 686, 790, 905, 1032, 2238};

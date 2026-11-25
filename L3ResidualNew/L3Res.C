@@ -21,7 +21,10 @@
 #include "TLine.h"
 #include "TNamed.h"
 #include "TObjArray.h"
+#include "TPad.h"
 #include "TParameter.h"
+#include "TProfile.h"
+#include "TProfile2D.h"
 #include "TProfile3D.h"
 #include "TStyle.h"
 #include "TSystem.h"
@@ -77,6 +80,16 @@ static TString responseAxisLabel(const PreparedInput &prepared) {
 static TString alphaRatioAxisLabel(const PreparedInput &prepared) {
   return Form("r_{%s}(#alpha)", prepared.label.Data());
 }
+
+// Purpose: describe which pT axis a per-input plot is drawn against, so the
+// same drawing code serves both the pTref series and the vsjetpt series.
+struct PlotAxis {
+  TString symbol; // axis symbol, e.g. "p_{T}^{ref}"
+  TString tag;    // file-name tag, e.g. "ptref" (-> *_vsptref.png)
+};
+
+static PlotAxis ptRefAxis() { return {"p_{T}^{ref}", "ptref"}; }
+static PlotAxis jetPtAxis() { return {"p_{T}^{jet}", "jetpt"}; }
 
 struct SequentialFitResult {
   TF1 *f0 = nullptr;
@@ -334,18 +347,21 @@ void L3Res(TString inFileL3Derived = "L3_derived.root",
   // contract.
   auto saveRatioOverlay = [&](const PreparedInput &prepared,
                               const map<int, TH1D *> &ratioSeries,
-                              const vector<double> &alphaEdges,
-                              const string &inputPdfFolder) {
-    TCanvas canvas(Form("cRatioOverlay_%s", prepared.token.Data()),
-                   Form("cRatioOverlay_%s", prepared.token.Data()), 900, 700);
+                              TH1D *refHist, const vector<double> &alphaEdges,
+                              const string &inputPdfFolder,
+                              const PlotAxis &axis) {
+    TCanvas canvas(
+        Form("cRatioOverlay_%s_%s", prepared.token.Data(), axis.tag.Data()),
+        Form("cRatioOverlay_%s_%s", prepared.token.Data(), axis.tag.Data()),
+        900, 700);
     canvas.SetLogx();
 
     TH1D *frame = new TH1D(
-        Form("hRatioOverlay_%s", prepared.token.Data()),
-        Form(";p_{T}^{ref} (GeV);%s", responseAxisLabel(prepared).Data()), 100,
-        prepared.refRatioHist->GetXaxis()->GetBinLowEdge(1),
-        prepared.refRatioHist->GetXaxis()->GetBinLowEdge(
-            prepared.refRatioHist->GetNbinsX() + 1));
+        Form("hRatioOverlay_%s_%s", prepared.token.Data(), axis.tag.Data()),
+        Form(";%s (GeV);%s", axis.symbol.Data(),
+             responseAxisLabel(prepared).Data()),
+        100, refHist->GetXaxis()->GetBinLowEdge(1),
+        refHist->GetXaxis()->GetBinLowEdge(refHist->GetNbinsX() + 1));
     frame->SetMinimum(0.7);
     frame->SetMaximum(1.5);
     frame->GetXaxis()->SetMoreLogLabels(kTRUE);
@@ -399,8 +415,9 @@ void L3Res(TString inFileL3Derived = "L3_derived.root",
                          prepared.label.Data(), prepared.label.Data()));
     legend.Draw();
     drawCmsLabel(canvas);
-    canvas.SaveAs(Form("%s/L3Res_%s_ratio_overlay_vsptref.png",
-                       inputPdfFolder.c_str(), prepared.token.Data()));
+    canvas.SaveAs(Form("%s/L3Res_%s_ratio_overlay_vs%s.png",
+                       inputPdfFolder.c_str(), prepared.token.Data(),
+                       axis.tag.Data()));
 
     delete frame;
   };
@@ -408,18 +425,48 @@ void L3Res(TString inFileL3Derived = "L3_derived.root",
   // Purpose: draw the reference-alpha raw MC/Data response used in the alpha
   // fit.
   auto saveRefRawOverlay = [&](const PreparedInput &prepared, TH1D *rawMc,
-                               TH1D *rawDt, const string &inputPdfFolder) {
-    TCanvas canvas(Form("cRawOverlay_%s", prepared.token.Data()),
-                   Form("cRawOverlay_%s", prepared.token.Data()), 900, 700);
+                               TH1D *rawDt, const string &inputPdfFolder,
+                               const PlotAxis &axis) {
+    TCanvas canvas(
+        Form("cRawOverlay_%s_%s", prepared.token.Data(), axis.tag.Data()),
+        Form("cRawOverlay_%s_%s", prepared.token.Data(), axis.tag.Data()), 900,
+        700);
     canvas.SetLogx();
 
     TH1D *frame = new TH1D(
-        Form("hRawOverlay_%s", prepared.token.Data()),
-        Form(";p_{T}^{ref} (GeV);%s", balanceAxisLabel(prepared).Data()), 100,
-        rawMc->GetXaxis()->GetBinLowEdge(1),
+        Form("hRawOverlay_%s_%s", prepared.token.Data(), axis.tag.Data()),
+        Form(";%s (GeV);%s", axis.symbol.Data(),
+             balanceAxisLabel(prepared).Data()),
+        100, rawMc->GetXaxis()->GetBinLowEdge(1),
         rawMc->GetXaxis()->GetBinLowEdge(rawMc->GetNbinsX() + 1));
-    frame->SetMinimum(0.7);
-    frame->SetMaximum(1.02);
+    double yLow = 0.7;
+    double yHigh = 1.02;
+    if (axis.tag != "ptref") {
+      // Binned in jet pT the balance is not bounded near 1 (it grows well
+      // above 1 at high jet pT from the pTref threshold), so fit the range
+      // to the filled bins instead.
+      yLow = 1e9;
+      yHigh = -1e9;
+      for (TH1D *hist : {rawMc, rawDt}) {
+        for (int bin = 1; bin <= hist->GetNbinsX(); ++bin) {
+          const double value = hist->GetBinContent(bin);
+          if (!(value > 0.0) || !std::isfinite(value))
+            continue;
+          yLow = std::min(yLow, value - hist->GetBinError(bin));
+          yHigh = std::max(yHigh, value + hist->GetBinError(bin));
+        }
+      }
+      if (yLow > yHigh) {
+        yLow = 0.7;
+        yHigh = 1.02;
+      } else {
+        const double pad = 0.1 * (yHigh - yLow);
+        yLow -= pad;
+        yHigh += 3.0 * pad; // leave room for the labels and legend
+      }
+    }
+    frame->SetMinimum(yLow);
+    frame->SetMaximum(yHigh);
     frame->GetXaxis()->SetMoreLogLabels(kTRUE);
     frame->GetXaxis()->SetNoExponent(kTRUE);
     styleFrameAxes(frame);
@@ -461,8 +508,9 @@ void L3Res(TString inFileL3Derived = "L3_derived.root",
           Form("%.3f < #eta < %.3f", prepared.etaMin, prepared.etaMax));
     }
     drawCmsLabel(canvas);
-    canvas.SaveAs(Form("%s/L3Res_%s_refalpha_raw_vsptref.png",
-                       inputPdfFolder.c_str(), prepared.token.Data()));
+    canvas.SaveAs(Form("%s/L3Res_%s_refalpha_raw_vs%s.png",
+                       inputPdfFolder.c_str(), prepared.token.Data(),
+                       axis.tag.Data()));
 
     delete frame;
   };
@@ -472,12 +520,15 @@ void L3Res(TString inFileL3Derived = "L3_derived.root",
   auto saveAlphaFitPlot = [&](const PreparedInput &prepared, int ptBin,
                               double ptLow, double ptHigh, TGraph *graph,
                               TF1 *fitLine, double kfsr, double kfsrError,
-                              const string &alphaFolder) {
-    TCanvas canvas(Form("cAlphaFit_%s_%d", prepared.token.Data(), ptBin),
-                   Form("cAlphaFit_%s_%d", prepared.token.Data(), ptBin), 800,
-                   600);
+                              const string &alphaFolder, const PlotAxis &axis) {
+    TCanvas canvas(Form("cAlphaFit_%s_%s_%d", prepared.token.Data(),
+                        axis.tag.Data(), ptBin),
+                   Form("cAlphaFit_%s_%s_%d", prepared.token.Data(),
+                        axis.tag.Data(), ptBin),
+                   800, 600);
     TH1D *frame =
-        new TH1D(Form("hAlphaFit_%s_%d", prepared.token.Data(), ptBin),
+        new TH1D(Form("hAlphaFit_%s_%s_%d", prepared.token.Data(),
+                      axis.tag.Data(), ptBin),
                  Form(";#alpha;%s", alphaRatioAxisLabel(prepared).Data()), 100,
                  0.0, 0.5);
     frame->SetMinimum(0.97);
@@ -505,7 +556,8 @@ void L3Res(TString inFileL3Derived = "L3_derived.root",
     label.SetTextSize(0.035);
     label.DrawLatex(0.18, 0.86, prepared.label.Data());
     label.DrawLatex(0.18, 0.81,
-                    Form("p_{T}^{ref}: %.0f-%.0f GeV", ptLow, ptHigh));
+                    Form("%s: %.0f-%.0f GeV", axis.symbol.Data(), ptLow,
+                         ptHigh));
     label.DrawLatex(0.18, 0.76,
                     Form("#alpha_{ref} < %.2f, fit %.2f #leq #alpha #leq %.2f",
                          prepared.refAlphaValue, fitAlphaMin, fitAlphaMax));
@@ -522,26 +574,30 @@ void L3Res(TString inFileL3Derived = "L3_derived.root",
                     Form("m = %.4f #pm %.4f", fitLine->GetParameter(1),
                          fitLine->GetParError(1)));
     drawCmsLabel(canvas);
-    canvas.SaveAs(Form("%s/L3Res_%s_kFSR_alphaFit_pt%.0fto%.0f.png",
-                       alphaFolder.c_str(), prepared.token.Data(), ptLow,
-                       ptHigh));
+    // Keep the historical pTref name (..._alphaFit_pt60to65.png); the jet-pT
+    // series gets ..._alphaFit_jetpt60to65.png.
+    const TString binStem = (axis.tag == "ptref") ? TString("pt") : axis.tag;
+    canvas.SaveAs(Form("%s/L3Res_%s_kFSR_alphaFit_%s%.0fto%.0f.png",
+                       alphaFolder.c_str(), prepared.token.Data(),
+                       binStem.Data(), ptLow, ptHigh));
 
     delete frame;
   };
 
   // Purpose: draw the per-input kFSR summary after the alpha fits finish.
-  auto saveKfsrSummary = [&](const PreparedInput &prepared,
-                             const string &alphaFolder) {
-    TCanvas canvas(Form("cKfsr_%s", prepared.token.Data()),
-                   Form("cKfsr_%s", prepared.token.Data()), 900, 700);
+  auto saveKfsrSummary = [&](const PreparedInput &prepared, TH1D *kfsrHist,
+                             const string &alphaFolder, const PlotAxis &axis) {
+    TCanvas canvas(Form("cKfsr_%s_%s", prepared.token.Data(), axis.tag.Data()),
+                   Form("cKfsr_%s_%s", prepared.token.Data(), axis.tag.Data()),
+                   900, 700);
     canvas.SetLogx();
 
-    TH1D *frame =
-        new TH1D(Form("hKfsr_%s", prepared.token.Data()),
-                 Form(";p_{T}^{ref} (GeV);k_{FSR}^{%s}", prepared.label.Data()),
-                 100, prepared.kfsrHist->GetXaxis()->GetBinLowEdge(1),
-                 prepared.kfsrHist->GetXaxis()->GetBinLowEdge(
-                     prepared.kfsrHist->GetNbinsX() + 1));
+    TH1D *frame = new TH1D(
+        Form("hKfsr_%s_%s", prepared.token.Data(), axis.tag.Data()),
+        Form(";%s (GeV);k_{FSR}^{%s}", axis.symbol.Data(),
+             prepared.label.Data()),
+        100, kfsrHist->GetXaxis()->GetBinLowEdge(1),
+        kfsrHist->GetXaxis()->GetBinLowEdge(kfsrHist->GetNbinsX() + 1));
     frame->SetMinimum(0.9);
     frame->SetMaximum(1.1);
     frame->GetXaxis()->SetMoreLogLabels(kTRUE);
@@ -555,10 +611,10 @@ void L3Res(TString inFileL3Derived = "L3_derived.root",
     unity.SetLineColor(kGray + 1);
     unity.Draw("SAME");
 
-    prepared.kfsrHist->SetMarkerStyle(kFullCircle);
-    prepared.kfsrHist->SetMarkerColor(kBlue + 1);
-    prepared.kfsrHist->SetLineColor(kBlue + 1);
-    prepared.kfsrHist->Draw("PE1 SAME");
+    kfsrHist->SetMarkerStyle(kFullCircle);
+    kfsrHist->SetMarkerColor(kBlue + 1);
+    kfsrHist->SetLineColor(kBlue + 1);
+    kfsrHist->Draw("PE1 SAME");
 
     TLatex label;
     label.SetNDC();
@@ -569,26 +625,28 @@ void L3Res(TString inFileL3Derived = "L3_derived.root",
                     Form("#alpha_{ref} < %.2f, fit %.2f #leq #alpha #leq %.2f",
                          prepared.refAlphaValue, fitAlphaMin, fitAlphaMax));
     drawCmsLabel(canvas);
-    canvas.SaveAs(Form("%s/L3Res_%s_kFSR_vsptref.png", alphaFolder.c_str(),
-                       prepared.token.Data()));
+    canvas.SaveAs(Form("%s/L3Res_%s_kFSR_vs%s.png", alphaFolder.c_str(),
+                       prepared.token.Data(), axis.tag.Data()));
 
     delete frame;
   };
 
   // Purpose: draw the reference-alpha ratio and the alpha->0 corrected response
   // on the same axis.
-  auto saveCorrSummary = [&](const PreparedInput &prepared,
-                             const string &alphaFolder) {
-    TCanvas canvas(Form("cCorr_%s", prepared.token.Data()),
-                   Form("cCorr_%s", prepared.token.Data()), 900, 700);
+  auto saveCorrSummary = [&](const PreparedInput &prepared, TH1D *refHist,
+                             TH1D *corrHist, const string &alphaFolder,
+                             const PlotAxis &axis) {
+    TCanvas canvas(Form("cCorr_%s_%s", prepared.token.Data(), axis.tag.Data()),
+                   Form("cCorr_%s_%s", prepared.token.Data(), axis.tag.Data()),
+                   900, 700);
     canvas.SetLogx();
 
     TH1D *frame = new TH1D(
-        Form("hCorr_%s", prepared.token.Data()),
-        Form(";p_{T}^{ref} (GeV);%s", responseAxisLabel(prepared).Data()), 100,
-        prepared.corrHist->GetXaxis()->GetBinLowEdge(1),
-        prepared.corrHist->GetXaxis()->GetBinLowEdge(
-            prepared.corrHist->GetNbinsX() + 1));
+        Form("hCorr_%s_%s", prepared.token.Data(), axis.tag.Data()),
+        Form(";%s (GeV);%s", axis.symbol.Data(),
+             responseAxisLabel(prepared).Data()),
+        100, corrHist->GetXaxis()->GetBinLowEdge(1),
+        corrHist->GetXaxis()->GetBinLowEdge(corrHist->GetNbinsX() + 1));
     frame->SetMinimum(0.7);
     frame->SetMaximum(1.5);
     frame->GetXaxis()->SetMoreLogLabels(kTRUE);
@@ -602,24 +660,24 @@ void L3Res(TString inFileL3Derived = "L3_derived.root",
     unity.SetLineColor(kGray + 1);
     unity.Draw("SAME");
 
-    prepared.refRatioHist->SetMarkerStyle(kOpenCircle);
-    prepared.refRatioHist->SetMarkerColor(kBlue + 1);
-    prepared.refRatioHist->SetLineColor(kBlue + 1);
-    prepared.refRatioHist->Draw("PE1 SAME");
+    refHist->SetMarkerStyle(kOpenCircle);
+    refHist->SetMarkerColor(kBlue + 1);
+    refHist->SetLineColor(kBlue + 1);
+    refHist->Draw("PE1 SAME");
 
-    prepared.corrHist->SetMarkerStyle(kFullCircle);
-    prepared.corrHist->SetMarkerColor(kRed + 1);
-    prepared.corrHist->SetLineColor(kRed + 1);
-    prepared.corrHist->Draw("PE1 SAME");
+    corrHist->SetMarkerStyle(kFullCircle);
+    corrHist->SetMarkerColor(kRed + 1);
+    corrHist->SetLineColor(kRed + 1);
+    corrHist->Draw("PE1 SAME");
 
     TLegend legend(0.54, 0.74, 0.88, 0.88);
     legend.SetBorderSize(0);
     legend.SetFillStyle(0);
     legend.SetTextFont(42);
     legend.SetTextSize(0.032);
-    legend.AddEntry(prepared.refRatioHist,
-                    Form("Ref #alpha < %.2f", prepared.refAlphaValue), "PE");
-    legend.AddEntry(prepared.corrHist, "#alpha #rightarrow 0", "PE");
+    legend.AddEntry(refHist, Form("Ref #alpha < %.2f", prepared.refAlphaValue),
+                    "PE");
+    legend.AddEntry(corrHist, "#alpha #rightarrow 0", "PE");
     legend.Draw();
 
     TLatex label;
@@ -635,9 +693,84 @@ void L3Res(TString inFileL3Derived = "L3_derived.root",
                     Form("#alpha_{ref} < %.2f, fit %.2f #leq #alpha #leq %.2f",
                          prepared.refAlphaValue, fitAlphaMin, fitAlphaMax));
     drawCmsLabel(canvas);
-    canvas.SaveAs(Form("%s/L3Res_%s_corr_alpha0_vsptref.png",
+    canvas.SaveAs(Form("%s/L3Res_%s_corr_alpha0_vs%s.png", alphaFolder.c_str(),
+                       prepared.token.Data(), axis.tag.Data()));
+
+    delete frame;
+  };
+
+  // Purpose: overlay the alpha->0 corrected response binned in pTref and in
+  // leading-jet pT on one axis, to compare the two binnings directly.
+  auto saveCorrPtRefVsJetPt = [&](const PreparedInput &prepared,
+                                  const string &alphaFolder) {
+    TCanvas canvas(Form("cCorrCmp_%s", prepared.token.Data()),
+                   Form("cCorrCmp_%s", prepared.token.Data()), 900, 700);
+    canvas.SetLogx();
+
+    const double xMin =
+        std::min(prepared.corrHist->GetXaxis()->GetBinLowEdge(1),
+                 prepared.corrJetHist->GetXaxis()->GetBinLowEdge(1));
+    const double xMax = std::max(
+        prepared.corrHist->GetXaxis()->GetBinLowEdge(
+            prepared.corrHist->GetNbinsX() + 1),
+        prepared.corrJetHist->GetXaxis()->GetBinLowEdge(
+            prepared.corrJetHist->GetNbinsX() + 1));
+    TH1D *frame = new TH1D(
+        Form("hCorrCmp_%s", prepared.token.Data()),
+        Form(";p_{T}^{ref} or p_{T}^{jet} (GeV);%s(#alpha#rightarrow0)",
+             responseAxisLabel(prepared).Data()),
+        100, xMin, xMax);
+    frame->SetMinimum(0.7);
+    frame->SetMaximum(1.5);
+    frame->GetXaxis()->SetMoreLogLabels(kTRUE);
+    frame->GetXaxis()->SetNoExponent(kTRUE);
+    styleFrameAxes(frame);
+    frame->Draw();
+
+    TLine unity(xMin, 1.0, xMax, 1.0);
+    unity.SetLineStyle(kDashed);
+    unity.SetLineColor(kGray + 1);
+    unity.Draw("SAME");
+
+    TH1D *ptRefHist = (TH1D *)prepared.corrHist->Clone(
+        Form("corrCmp_ptref_%s", prepared.token.Data()));
+    ptRefHist->SetDirectory(nullptr);
+    ptRefHist->SetMarkerStyle(kFullCircle);
+    ptRefHist->SetMarkerColor(kRed + 1);
+    ptRefHist->SetLineColor(kRed + 1);
+    ptRefHist->Draw("PE1 SAME");
+
+    TH1D *jetHist = (TH1D *)prepared.corrJetHist->Clone(
+        Form("corrCmp_jetpt_%s", prepared.token.Data()));
+    jetHist->SetDirectory(nullptr);
+    jetHist->SetMarkerStyle(kOpenSquare);
+    jetHist->SetMarkerColor(kAzure + 2);
+    jetHist->SetLineColor(kAzure + 2);
+    jetHist->Draw("PE1 SAME");
+
+    TLegend legend(0.54, 0.74, 0.88, 0.88);
+    legend.SetBorderSize(0);
+    legend.SetFillStyle(0);
+    legend.SetTextFont(42);
+    legend.SetTextSize(0.032);
+    legend.AddEntry(ptRefHist, "vs p_{T}^{ref}", "PE");
+    legend.AddEntry(jetHist, "vs p_{T}^{jet}", "PE");
+    legend.Draw();
+
+    TLatex label;
+    label.SetNDC();
+    label.SetTextFont(42);
+    label.SetTextSize(0.032);
+    label.DrawLatex(0.18, 0.86, prepared.label.Data());
+    label.DrawLatex(0.18, 0.81,
+                    Form("#alpha_{ref} < %.2f, fit %.2f #leq #alpha #leq %.2f",
+                         prepared.refAlphaValue, fitAlphaMin, fitAlphaMax));
+    drawCmsLabel(canvas);
+    canvas.SaveAs(Form("%s/L3Res_%s_corr_alpha0_ptref_vs_jetpt.png",
                        alphaFolder.c_str(), prepared.token.Data()));
 
+    delete ptRefHist;
+    delete jetHist;
     delete frame;
   };
 
@@ -713,6 +846,350 @@ void L3Res(TString inFileL3Derived = "L3_derived.root",
                        prepared.token.Data()));
 
     delete frame;
+  };
+
+  // Purpose: balance and Data/MC vs fine |eta| for one pT bin, read from the
+  // balance_vsabseta_* histograms deriveL3_from_photonjet.C writes from the
+  // fine-|eta| profiles (independent of the |eta| binning used by the fit).
+  struct AbsEtaSeries {
+    map<int, TH1D *> mc, data, ratio; // keyed by pT bin
+    TAxis *ptAxis = nullptr;
+  };
+
+  auto loadAbsEtaSeries = [&](TFile *inputFile, const PlotAxis &axis,
+                              const char *profileName) -> AbsEtaSeries {
+    AbsEtaSeries series;
+    TProfile3D *profile = (TProfile3D *)inputFile->Get(profileName);
+    if (!profile)
+      return series;
+    series.ptAxis = (TAxis *)profile->GetXaxis()->Clone(
+        Form("absEtaPtAxis_%s", axis.tag.Data()));
+    for (int ptBin = 1; ptBin <= series.ptAxis->GetNbins(); ++ptBin) {
+      const TString tag = Form("%s%.0fto%.0f", axis.tag.Data(),
+                               series.ptAxis->GetBinLowEdge(ptBin),
+                               series.ptAxis->GetBinLowEdge(ptBin + 1));
+      TH1D *mc = (TH1D *)inputFile->Get("balance_vsabseta_mc_" + tag);
+      TH1D *data = (TH1D *)inputFile->Get("balance_vsabseta_data_" + tag);
+      TH1D *ratio = (TH1D *)inputFile->Get("ratio_vsabseta_" + tag);
+      if (!mc || !data || !ratio)
+        continue;
+      series.mc[ptBin] = (TH1D *)mc->Clone(Form("%s_clone", mc->GetName()));
+      series.data[ptBin] =
+          (TH1D *)data->Clone(Form("%s_clone", data->GetName()));
+      series.ratio[ptBin] =
+          (TH1D *)ratio->Clone(Form("%s_clone", ratio->GetName()));
+      series.mc[ptBin]->SetDirectory(nullptr);
+      series.data[ptBin]->SetDirectory(nullptr);
+      series.ratio[ptBin]->SetDirectory(nullptr);
+    }
+    return series;
+  };
+
+  // Purpose: y-range covering the filled bins (value +- error) of a set of
+  // histograms, padded, with a minimum span so flat series stay readable.
+  auto filledRange = [](const vector<TH1D *> &hists, double minSpan,
+                        double &yLow, double &yHigh) {
+    yLow = 1e9;
+    yHigh = -1e9;
+    for (TH1D *hist : hists) {
+      for (int bin = 1; bin <= hist->GetNbinsX(); ++bin) {
+        const double value = hist->GetBinContent(bin);
+        if (!(value > 0.0) || !std::isfinite(value))
+          continue;
+        yLow = std::min(yLow, value - hist->GetBinError(bin));
+        yHigh = std::max(yHigh, value + hist->GetBinError(bin));
+      }
+    }
+    if (yLow > yHigh) {
+      yLow = 0.5;
+      yHigh = 1.5;
+      return;
+    }
+    if (yHigh - yLow < minSpan) {
+      const double mid = 0.5 * (yLow + yHigh);
+      yLow = mid - 0.5 * minSpan;
+      yHigh = mid + 0.5 * minSpan;
+    }
+    const double pad = 0.1 * (yHigh - yLow);
+    yLow -= pad;
+    yHigh += pad;
+  };
+
+  // Purpose: one pT bin - MC/Data balance vs |eta| on top, Data/MC below.
+  auto saveAbsEtaBinPlot = [&](const PreparedInput &prepared,
+                               const AbsEtaSeries &series, int ptBin,
+                               const string &etaFolder, const PlotAxis &axis) {
+    TH1D *mc = series.mc.at(ptBin);
+    TH1D *data = series.data.at(ptBin);
+    TH1D *ratio = series.ratio.at(ptBin);
+    const double ptLow = series.ptAxis->GetBinLowEdge(ptBin);
+    const double ptHigh = series.ptAxis->GetBinLowEdge(ptBin + 1);
+    const double etaMin = mc->GetXaxis()->GetXmin();
+    const double etaMax = mc->GetXaxis()->GetXmax();
+    const TString id =
+        Form("%s_%s%d", prepared.token.Data(), axis.tag.Data(), ptBin);
+
+    TCanvas canvas(Form("cAbsEta_%s", id.Data()), Form("cAbsEta_%s", id.Data()),
+                   800, 800);
+    TPad top(Form("pTop_%s", id.Data()), "", 0.0, 0.32, 1.0, 1.0);
+    TPad bottom(Form("pBot_%s", id.Data()), "", 0.0, 0.0, 1.0, 0.32);
+    top.SetBottomMargin(0.02);
+    bottom.SetTopMargin(0.03);
+    bottom.SetBottomMargin(0.32);
+    top.Draw();
+    bottom.Draw();
+
+    top.cd();
+    double yLow, yHigh;
+    filledRange({mc, data}, 0.1, yLow, yHigh);
+    yHigh += 0.6 * (yHigh - yLow); // room for labels and legend
+    TH1D *frameTop =
+        new TH1D(Form("hAbsEtaTop_%s", id.Data()),
+                 Form(";;%s", balanceAxisLabel(prepared).Data()), 100, etaMin,
+                 etaMax);
+    frameTop->SetMinimum(yLow);
+    frameTop->SetMaximum(yHigh);
+    styleFrameAxes(frameTop);
+    frameTop->GetXaxis()->SetLabelSize(0);
+    frameTop->GetYaxis()->SetTitleSize(0.060);
+    frameTop->GetYaxis()->SetLabelSize(0.045);
+    frameTop->GetYaxis()->SetTitleOffset(1.05);
+    frameTop->Draw();
+
+    mc->SetMarkerStyle(kOpenCircle);
+    mc->SetMarkerColor(kBlue + 1);
+    mc->SetLineColor(kBlue + 1);
+    mc->Draw("PE1 SAME");
+    data->SetMarkerStyle(kFullCircle);
+    data->SetMarkerColor(kRed + 1);
+    data->SetLineColor(kRed + 1);
+    data->Draw("PE1 SAME");
+
+    TLegend legend(0.66, 0.66, 0.90, 0.84);
+    legend.SetBorderSize(0);
+    legend.SetFillStyle(0);
+    legend.SetTextFont(42);
+    legend.SetTextSize(0.045);
+    legend.AddEntry(mc, "MC", "PE");
+    legend.AddEntry(data, "Data", "PE");
+    legend.Draw();
+
+    TLatex label;
+    label.SetNDC();
+    label.SetTextFont(42);
+    label.SetTextSize(0.042);
+    label.DrawLatex(0.18, 0.84, prepared.label.Data());
+    label.DrawLatex(0.18, 0.78, Form("%s: %.0f-%.0f GeV", axis.symbol.Data(),
+                                     ptLow, ptHigh));
+    label.DrawLatex(0.18, 0.72,
+                    Form("#alpha_{ref} < %.2f (bin %d), raw - not "
+                         "#alpha#rightarrow0 corrected",
+                         prepared.refAlphaValue, refAlphaBin));
+    CMS_lumi(&top, 0, 0);
+
+    bottom.cd();
+    filledRange({ratio}, 0.1, yLow, yHigh);
+    TH1D *frameBot = new TH1D(Form("hAbsEtaBot_%s", id.Data()),
+                              ";|#eta_{jet}|;Data/MC", 100, etaMin, etaMax);
+    frameBot->SetMinimum(std::min(yLow, 0.98));
+    frameBot->SetMaximum(std::max(yHigh, 1.02));
+    frameBot->GetXaxis()->SetTitleSize(0.13);
+    frameBot->GetXaxis()->SetLabelSize(0.10);
+    frameBot->GetXaxis()->SetTitleOffset(1.0);
+    frameBot->GetYaxis()->SetTitleSize(0.11);
+    frameBot->GetYaxis()->SetLabelSize(0.09);
+    frameBot->GetYaxis()->SetTitleOffset(0.55);
+    frameBot->GetYaxis()->SetNdivisions(505);
+    frameBot->Draw();
+    TLine unity(etaMin, 1.0, etaMax, 1.0);
+    unity.SetLineStyle(kDashed);
+    unity.SetLineColor(kGray + 1);
+    unity.Draw("SAME");
+    ratio->SetMarkerStyle(kFullCircle);
+    ratio->SetMarkerColor(kBlack);
+    ratio->SetLineColor(kBlack);
+    ratio->Draw("PE1 SAME");
+
+    canvas.cd();
+    canvas.SaveAs(Form("%s/L3Res_%s_balance_vsabseta_%s%.0fto%.0f.png",
+                       etaFolder.c_str(), prepared.token.Data(),
+                       axis.tag.Data(), ptLow, ptHigh));
+
+    delete frameTop;
+    delete frameBot;
+  };
+
+  // Purpose: Data/MC vs fine |eta| for a few merged pT ranges on one axis.
+  // The ranges are merged from the stored fine-|eta| TProfile3Ds (sums of
+  // weights), not by averaging the per-bin histograms, so the weighted-MC
+  // statistics and errors stay correct. Drawn as step histograms.
+  auto saveAbsEtaRatioOverlay = [&](const PreparedInput &prepared,
+                                    TFile *inputFile, const TString &profileStem,
+                                    int nEtaKeep, const string &inputPdfFolder,
+                                    const PlotAxis &axis) {
+    TProfile3D *mc3 = (TProfile3D *)inputFile->Get(profileStem + "_mc");
+    TProfile3D *dt3 = (TProfile3D *)inputFile->Get(profileStem + "_data");
+    if (!mc3 || !dt3) {
+      cout << "INFO: " << profileStem << "_{mc,data} missing in "
+           << prepared.path << "; skipping the merged-pT |eta| ratio plot vs "
+           << axis.tag << "." << endl;
+      return;
+    }
+
+    // Project to (pT, |eta|) at the reference alpha bin only (cumulative
+    // alpha filling: bin refAlphaBin already means alpha < alpha_ref).
+    auto projectAtRefAlpha = [&](TProfile3D *profile,
+                                 const TString &name) -> TProfile2D * {
+      profile->GetZaxis()->SetRange(refAlphaBin, refAlphaBin);
+      TProfile2D *projected = profile->Project3DProfile("yx"); // x=pT, y=|eta|
+      // MC and Data profiles share one name, so detach and rename right away
+      // to keep the next projection from replacing this one.
+      projected->SetDirectory(nullptr);
+      projected->SetName(name);
+      profile->GetZaxis()->SetRange(0, 0);
+      return projected;
+    };
+    TProfile2D *mc2 = projectAtRefAlpha(
+        mc3, Form("mcAbsEta_%s_%s", prepared.token.Data(), axis.tag.Data()));
+    TProfile2D *dt2 = projectAtRefAlpha(
+        dt3, Form("dtAbsEta_%s_%s", prepared.token.Data(), axis.tag.Data()));
+
+    // Requested pT ranges; the last one runs to the end of the pT axis.
+    const vector<pair<double, double>> ptRanges = {
+        {60., 80.}, {80., 120.}, {120., 300.}, {300., 1e9}};
+    TAxis *ptAxis = mc2->GetXaxis();
+    nEtaKeep = std::min(nEtaKeep, mc2->GetNbinsY());
+    vector<double> etaEdges(nEtaKeep + 1);
+    for (int bin = 1; bin <= nEtaKeep + 1; ++bin)
+      etaEdges[bin - 1] = mc2->GetYaxis()->GetBinLowEdge(bin);
+
+    TCanvas canvas(
+        Form("cAbsEtaRatio_%s_%s", prepared.token.Data(), axis.tag.Data()),
+        Form("cAbsEtaRatio_%s_%s", prepared.token.Data(), axis.tag.Data()),
+        900, 700);
+
+    // Fixed range (as in ratio_raw_vseta), comparable across inputs.
+    TH1D *frame = new TH1D(
+        Form("hAbsEtaRatio_%s_%s", prepared.token.Data(), axis.tag.Data()),
+        Form(";|#eta_{jet}|;%s", responseAxisLabel(prepared).Data()), 100,
+        etaEdges.front(), etaEdges.back());
+    frame->SetMinimum(0.6);
+    frame->SetMaximum(1.4);
+    styleFrameAxes(frame);
+    frame->Draw();
+
+    TLine unity(etaEdges.front(), 1.0, etaEdges.back(), 1.0);
+    unity.SetLineStyle(kDashed);
+    unity.SetLineColor(kGray + 1);
+    unity.Draw("SAME");
+
+    TLegend legend(0.58, 0.70, 0.90, 0.90);
+    legend.SetBorderSize(0);
+    legend.SetFillStyle(0);
+    legend.SetTextFont(42);
+    legend.SetTextSize(0.030);
+
+    vector<TH1D *> drawn;
+    int index = 0;
+    for (const auto &range : ptRanges) {
+      int firstBin = 0, lastBin = 0;
+      for (int bin = 1; bin <= ptAxis->GetNbins(); ++bin) {
+        if (ptAxis->GetBinLowEdge(bin) >= range.first - 1e-6 &&
+            ptAxis->GetBinUpEdge(bin) <= range.second + 1e-6) {
+          if (!firstBin)
+            firstBin = bin;
+          lastBin = bin;
+        }
+      }
+      if (!firstBin)
+        continue;
+      const double ptLow = ptAxis->GetBinLowEdge(firstBin);
+      const double ptHigh = ptAxis->GetBinUpEdge(lastBin);
+      const TString id = Form("%s_%s_%.0fto%.0f", prepared.token.Data(),
+                              axis.tag.Data(), ptLow, ptHigh);
+
+      TProfile *mcEta = mc2->ProfileY("mcEta_" + id, firstBin, lastBin);
+      TProfile *dtEta = dt2->ProfileY("dtEta_" + id, firstBin, lastBin);
+      TH1D *ratio = new TH1D("ratioEta_" + id, "", nEtaKeep, etaEdges.data());
+      ratio->SetDirectory(nullptr);
+      for (int bin = 1; bin <= nEtaKeep; ++bin) {
+        const double mcVal = mcEta->GetBinContent(bin);
+        const double dtVal = dtEta->GetBinContent(bin);
+        if (!(mcVal > 0.0) || !(dtVal > 0.0) || mcEta->GetBinEntries(bin) <= 0 ||
+            dtEta->GetBinEntries(bin) <= 0)
+          continue;
+        const double value = dtVal / mcVal;
+        const double relErr = sqrt(pow(dtEta->GetBinError(bin) / dtVal, 2) +
+                                   pow(mcEta->GetBinError(bin) / mcVal, 2));
+        ratio->SetBinContent(bin, value);
+        ratio->SetBinError(bin, value * relErr);
+      }
+      delete mcEta;
+      delete dtEta;
+
+      const int color = colors[index % colorCount];
+      ratio->SetLineColor(color);
+      ratio->SetLineWidth(2);
+      ratio->SetMarkerSize(0);
+      ratio->Draw("HIST SAME"); // bin outline
+      ratio->Draw("E1 SAME");   // error bars at bin centres
+      legend.AddEntry(ratio,
+                      range.second > 1e8
+                          ? Form("%s #geq %.0f GeV", axis.symbol.Data(), ptLow)
+                          : Form("%.0f #leq %s < %.0f GeV", ptLow,
+                                 axis.symbol.Data(), ptHigh),
+                      "LE");
+      drawn.push_back(ratio);
+      ++index;
+    }
+
+    TLatex label;
+    label.SetNDC();
+    label.SetTextFont(42);
+    label.SetTextSize(0.032);
+    label.DrawLatex(0.18, 0.86, prepared.label.Data());
+    label.DrawLatex(0.18, 0.81,
+                    Form("%s = B_{%s}^{Data} / B_{%s}^{MC}",
+                         responseAxisLabel(prepared).Data(),
+                         prepared.label.Data(), prepared.label.Data()));
+    label.DrawLatex(0.18, 0.76,
+                    Form("#alpha_{ref} < %.2f, raw - not #alpha#rightarrow0",
+                         prepared.refAlphaValue));
+    legend.Draw();
+    frame->Draw("AXIS SAME"); // keep tick marks on top of the outlines
+    drawCmsLabel(canvas);
+    canvas.SaveAs(Form("%s/L3Res_%s_ratio_vsabseta_%s.png",
+                       inputPdfFolder.c_str(), prepared.token.Data(),
+                       axis.tag.Data()));
+
+    for (TH1D *hist : drawn)
+      delete hist;
+    delete mc2;
+    delete dt2;
+    delete frame;
+  };
+
+  // Purpose: all fine-|eta| plots for one pT axis, skipped quietly if the
+  // derived file predates the balance_vsabseta_* histograms.
+  auto saveAbsEtaPlots = [&](const PreparedInput &prepared, TFile *inputFile,
+                             const PlotAxis &axis, const TString &profileStem,
+                             const string &inputPdfFolder,
+                             const string &etaFolder) {
+    AbsEtaSeries series =
+        loadAbsEtaSeries(inputFile, axis, (profileStem + "_mc").Data());
+    if (series.ratio.empty()) {
+      cout << "INFO: balance_vsabseta_*_" << axis.tag << "* missing in "
+           << prepared.path << "; skipping the |eta| plots vs "
+           << axis.tag << "." << endl;
+      return;
+    }
+    gSystem->mkdir(etaFolder.c_str(), kTRUE);
+    for (const auto &entry : series.ratio)
+      saveAbsEtaBinPlot(prepared, series, entry.first, etaFolder, axis);
+    // Same |eta| range as the per-bin histograms (the fit's range).
+    saveAbsEtaRatioOverlay(prepared, inputFile, profileStem,
+                           series.ratio.begin()->second->GetNbinsX(),
+                           inputPdfFolder, axis);
   };
 
   vector<PreparedInput> preparedInputs;
@@ -871,12 +1348,48 @@ void L3Res(TString inFileL3Derived = "L3_derived.root",
       return;
     }
 
+    // Optional: raw MC/Data balance vs leading-jet pT at the reference alpha.
+    TH1D *rawJetMc = nullptr;
+    TH1D *rawJetDt = nullptr;
+    if (prepared.haveJetPt) {
+      TH1D *srcMc = (TH1D *)inputFile->Get(
+          Form("balance_vsjetpt_mc_alpha%d", refAlphaBin));
+      TH1D *srcDt = (TH1D *)inputFile->Get(
+          Form("balance_vsjetpt_data_alpha%d", refAlphaBin));
+      if (srcMc && srcDt) {
+        rawJetMc = (TH1D *)srcMc->Clone(
+            Form("balance_vsjetpt_mc_alpha%d_clone", refAlphaBin));
+        rawJetMc->SetDirectory(nullptr);
+        rawJetDt = (TH1D *)srcDt->Clone(
+            Form("balance_vsjetpt_data_alpha%d_clone", refAlphaBin));
+        rawJetDt->SetDirectory(nullptr);
+      } else {
+        cout << "INFO: balance_vsjetpt_{mc,data}_alpha" << refAlphaBin
+             << " missing in " << prepared.path
+             << "; skipping the raw balance vs jet pT plot." << endl;
+      }
+    }
+
     prepared.fitWindow = parseFitWindow(
         inputIndex < fitWindowTokens.size() ? fitWindowTokens[inputIndex] : "",
         prepared.refRatioHist);
-    saveRatioOverlay(prepared, ratioSeries, alphaEdges, inputPdfFolder);
-    saveRefRawOverlay(prepared, rawMc, rawDt, inputPdfFolder);
+    saveRatioOverlay(prepared, ratioSeries, prepared.refRatioHist, alphaEdges,
+                     inputPdfFolder, ptRefAxis());
+    saveRefRawOverlay(prepared, rawMc, rawDt, inputPdfFolder, ptRefAxis());
     saveEtaRawOverlay(prepared, etaRatioByPt, ptAxisForEta, inputPdfFolder);
+    saveAbsEtaPlots(prepared, inputFile, ptRefAxis(), "balance3D_abseta",
+                    inputPdfFolder, inputFolder + "/eta");
+    saveAbsEtaPlots(prepared, inputFile, jetPtAxis(),
+                    "balance3D_abseta_jetpt", inputPdfFolder,
+                    inputFolder + "/eta");
+    if (prepared.haveJetPt) {
+      saveRatioOverlay(prepared, jetRatioSeries, prepared.refJetRatioHist,
+                       alphaEdges, inputPdfFolder, jetPtAxis());
+      if (rawJetMc && rawJetDt) {
+        saveRefRawOverlay(prepared, rawJetMc, rawJetDt, inputPdfFolder,
+                          jetPtAxis());
+      }
+    }
 
     prepared.kfsrHist = (TH1D *)prepared.refRatioHist->Clone(
         Form("kFSR_vsptref_%s", prepared.token.Data()));
@@ -914,6 +1427,10 @@ void L3Res(TString inFileL3Derived = "L3_derived.root",
     }
     rawMc->Write("balance_vsptref_mc_refalpha");
     rawDt->Write("balance_vsptref_data_refalpha");
+    if (rawJetMc && rawJetDt) {
+      rawJetMc->Write("balance_vsjetpt_mc_refalpha");
+      rawJetDt->Write("balance_vsjetpt_data_refalpha");
+    }
     for (auto &entry : etaRatioByPt) {
       entry.second->Write(Form("ratio_vseta_ptbin%d_refalpha", entry.first));
     }
@@ -921,7 +1438,7 @@ void L3Res(TString inFileL3Derived = "L3_derived.root",
     auto fillCorrectedResponse =
         [&](TH1D *refHist, const map<int, TH1D *> &normalizedAxisRatioSeries,
             TH1D *kfsrHist, TH1D *corrHist, const TString &graphStem,
-            bool saveAlphaPlots) {
+            const PlotAxis &axis) {
           for (int ptBin = 1; ptBin <= refHist->GetNbinsX(); ++ptBin) {
             vector<double> alphaAllX;
             vector<double> alphaAllY;
@@ -1014,22 +1531,20 @@ void L3Res(TString inFileL3Derived = "L3_derived.root",
             alphaGraph->Write();
             alphaLineOut->Write();
 
-            if (saveAlphaPlots) {
-              saveAlphaFitPlot(
-                  prepared, ptBin, refHist->GetXaxis()->GetBinLowEdge(ptBin),
-                  refHist->GetXaxis()->GetBinLowEdge(ptBin + 1), alphaGraph,
-                  alphaLineOut, kfsr, kfsrError, alphaFolder);
-            }
+            saveAlphaFitPlot(
+                prepared, ptBin, refHist->GetXaxis()->GetBinLowEdge(ptBin),
+                refHist->GetXaxis()->GetBinLowEdge(ptBin + 1), alphaGraph,
+                alphaLineOut, kfsr, kfsrError, alphaFolder, axis);
           }
         };
 
     fillCorrectedResponse(prepared.refRatioHist, ratioNormSeries,
                           prepared.kfsrHist, prepared.corrHist,
-                          "gAlphaNormPtRef", true);
+                          "gAlphaNormPtRef", ptRefAxis());
     if (prepared.haveJetPt) {
       fillCorrectedResponse(prepared.refJetRatioHist, jetRatioNormSeries,
                             prepared.kfsrJetHist, prepared.corrJetHist,
-                            "gAlphaNormJetPt", false);
+                            "gAlphaNormJetPt", jetPtAxis());
     }
 
     prepared.kfsrHist->Write("kFSR_vsptref");
@@ -1038,8 +1553,16 @@ void L3Res(TString inFileL3Derived = "L3_derived.root",
       prepared.kfsrJetHist->Write("kFSR_vsjetpt");
       prepared.corrJetHist->Write("corr_vsjetpt");
     }
-    saveKfsrSummary(prepared, alphaFolder);
-    saveCorrSummary(prepared, alphaFolder);
+    saveKfsrSummary(prepared, prepared.kfsrHist, alphaFolder, ptRefAxis());
+    saveCorrSummary(prepared, prepared.refRatioHist, prepared.corrHist,
+                    alphaFolder, ptRefAxis());
+    if (prepared.haveJetPt) {
+      saveKfsrSummary(prepared, prepared.kfsrJetHist, alphaFolder,
+                      jetPtAxis());
+      saveCorrSummary(prepared, prepared.refJetRatioHist, prepared.corrJetHist,
+                      alphaFolder, jetPtAxis());
+      saveCorrPtRefVsJetPt(prepared, alphaFolder);
+    }
 
     prepared.displayGraph = buildWindowedGraph(
         prepared.corrHist, prepared.fitWindow, true,

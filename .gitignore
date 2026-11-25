@@ -30,3 +30,8 @@ test_output/
 # Python
 __pycache__/
 *.pyc
+# Condor job logs
+Outputs/L3FillHistOutputs/*/Log/
+
+# Kerberos credential cache (never commit)
+fillhistograms/xirong.cc

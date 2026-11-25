@@ -1,0 +1,24 @@
+# HTCondor submit file for the PhotonJet L3 residual analysis - DATA.
+# Generate photonjet_jobs.txt and submit with:  ./run.sh submit
+# For MC use condor_photonjet_mc.sub via:       ./run.sh submit mc
+#
+# Data is read from a local/EOS-mounted directory (INPUT_TYPE=directory in
+# run.sh), so unlike MC this needs no grid proxy - the execute node reads it
+# the same way as any other EOS path.
+
+universe    = vanilla
+executable  = run_photonjet_job.sh
+arguments   = $(filelist) $(output_tag) $(batch_index) $(total_batches) $(files_per_job) $(jet_tree) $(is_mc) $(input_type)
+
+# Condor's own event log must be on a local filesystem, not EOS/AFS.
+log         = /tmp/condor_photonjet.log
+
+# stdout/stderr are redirected to EOS by the wrapper script itself.
+
+should_transfer_files = NO
+
++JobFlavour = "tomorrow"
+request_cpus   = 1
+request_memory = 4000
+
+queue filelist,output_tag,batch_index,total_batches,files_per_job,jet_tree,is_mc,input_type from photonjet_jobs_rerun.txt

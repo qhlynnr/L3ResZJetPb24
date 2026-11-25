@@ -89,9 +89,10 @@ case "$SAMPLE" in
     JOBFILE="photonjet_jobs.txt"
     SUBFILE="condor_photonjet.sub"
     MAKELIST="./make_filelists.sh"
-    # One entry per HardProbes stream. Override to pick streams, e.g.
-    #   STREAMS="0 1 2 3 4" ./run.sh submit
-    STREAMS=${STREAMS:-"0"}
+    # One entry per HardProbes stream (all five by default). Override to
+    # pick a subset, e.g.
+    #   STREAMS="0" ./run.sh submit
+    STREAMS=${STREAMS:-"0 1 2 3 4"}
     DATASETS=()
     for s in $STREAMS; do
         dir=$(resolve_stream_dir "$s")
@@ -210,6 +211,35 @@ check_debug_flag() {
     fi
 }
 
+# Every Condor job execs "analyse_PhotonJet.cc+" (see run_photonjet_job.sh) in
+# this same shared AFS directory. ACLiC only rebuilds a .so when its source is
+# newer, so if histograms.C/eventhistograms.C/analyse_PhotonJet.cc were edited
+# since the last build, the .so's are stale when "submit" fires - and every
+# job launched at once independently notices that and races to rebuild the
+# same analyse_PhotonJet_cc.so/histograms_C.so, stepping on each other's
+# rootcling dictionary output (leftover analyse_PhotonJet_cc_ACLiC_dict.cxx_
+# tmp_* files are the fingerprint of that race). A stale histograms_C.so is
+# worse than just slow: if histograms.h changed but that .so wasn't rebuilt,
+# it disagrees with analyse_PhotonJet_cc.so about the histograms class's
+# member layout, so h->someNewMember reads garbage instead of the real
+# pointer - a histogram silently isn't filled/written instead of crashing.
+# Building all three serially, once, before any job starts avoids both.
+compile_lib() {
+    echo "Compiling histograms.C, eventhistograms.C, analyse_PhotonJet.cc once"
+    echo "(serially, before any Condor job can race on the shared .so files)..."
+    local src log
+    for src in histograms.C eventhistograms.C analyse_PhotonJet.cc; do
+        log=$(root -l -b -q -e ".L ${src}+" 2>&1)
+        if echo "$log" | grep -qE ' error:| Error in '; then
+            echo "$log"
+            echo "ERROR: compiling ${src} failed - see above. Not submitting."
+            exit 1
+        fi
+    done
+    echo "Compile OK."
+    echo
+}
+
 # ------------------------------------------------------------ job list gen
 
 write_jobs() {
@@ -271,7 +301,7 @@ case "$MODE" in
     # batchIndex 0 with maxFiles=NTEST reads exactly the first NTEST files.
     # The _TEST tag keeps this out of the way of the real batch outputs, and out
     # of what `merge` picks up.
-    root -l -b -q "analyse_PhotonJet.cc+(\"${input}\", \"${OUTPUT_TAG_BASE}_TEST_${SAMPLE}\", ${IS_MC}, false, \"${INPUT_TYPE}\", ${NTEST}, -1, \"${OUTPUT_DIR}/\", 0, 1, \"${JET_TREE}\")"
+    root -l -b -q "analyse_PhotonJet.cc+(\"${input}\", \"${OUTPUT_TAG_BASE}_TEST_${SAMPLE}\", ${IS_MC}, true, \"${INPUT_TYPE}\", ${NTEST}, -1, \"${OUTPUT_DIR}/\", 0, 1, \"${JET_TREE}\")"
     ;;
 
   jobs)
@@ -280,6 +310,7 @@ case "$MODE" in
 
   submit)
     check_debug_flag
+    compile_lib
     write_jobs
     echo
     if [ "$INPUT_TYPE" = "filelist" ]; then
@@ -305,7 +336,6 @@ case "$MODE" in
     mkdir -p "$MERGED_DIR"
     for d in "${DATASETS[@]}"; do
         tag=$(out_tag "$d")
-        # shellcheck disable=SC2206
         parts=( ${OUTPUT_DIR}/${tag}_batch*.root )
         if [ ! -e "${parts[0]}" ]; then
             echo "$(label "$d"): no outputs yet, skipping"
